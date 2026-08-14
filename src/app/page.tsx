@@ -428,7 +428,7 @@ export default function UIShowcase() {
           <h2 className="text-3xl font-bold text-foreground">Dialog / Modal</h2>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <div className="flex gap-2">
-              <DialogTrigger asChild>
+              <DialogTrigger>
                 <Button variant="primary">Open Dialog</Button>
               </DialogTrigger>
             </div>
