@@ -67,7 +67,7 @@ export async function GET(
       },
       { status: 200 }
     );
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
         success: false,
@@ -233,6 +233,35 @@ export async function DELETE(
       },
       { status: 200 }
     );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to delete salon';
+
+    if (message.includes('SALON_NOT_FOUND')) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'SALON_NOT_FOUND',
+            message: 'Salon not found',
+          },
+        },
+        { status: 404 }
+      );
+    }
+
+    if (message.includes('SALON_ACCESS_DENIED')) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'SALON_ACCESS_DENIED',
+            message: 'You do not have permission to delete this salon',
+          },
+        },
+        { status: 403 }
+      );
+    }
+
     return NextResponse.json(
       {
         success: false,

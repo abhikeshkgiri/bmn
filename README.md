@@ -848,9 +848,344 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
    ```
    Cookie: `bookmynai-session` cleared
 
+## Service Management Architecture
+
+**Phase 6: Service Management & Salon Service Catalog**
+
+The Service Management system allows salon owners to create and manage their service catalog. Services belong to specific salons and can be discovered by customers.
+
+### Service Model
+
+```typescript
+{
+  _id: ObjectId,
+  salon: ObjectId,                // Reference to Salon (required)
+  name: string,                   // Service name (2-100 chars)
+  slug: string,                   // URL-safe slug (unique per salon)
+  description?: string,           // Optional service description
+  category: ServiceCategory,      // From SERVICE_CATEGORY enum
+  image?: string,                 // Image URL
+  duration: number,               // In minutes (5-480)
+  price: number,                  // In paise (₹ × 100)
+  discountPrice?: number,         // In paise, optional
+  isActive: boolean,              // Public visibility flag
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### Service Categories
+
+Services are categorized using centralized constants from `src/constants/services.ts`:
+
+- HAIRCUT
+- BEARD
+- HAIR_STYLING
+- HAIR_COLOR
+- FACIAL
+- GROOMING
+- KIDS
+- OTHER
+
+### Pricing & Duration
+
+**Pricing** is stored in paise (integer values) for precision:
+- ₹300 → 30000 paise
+- ₹250 → 25000 paise
+- Never use floating-point for currency
+
+**Duration** is in minutes with validation:
+- Minimum: 5 minutes
+- Maximum: 480 minutes (8 hours)
+- Recommended: 15, 20, 30, 45, 60, 90, 120, 180
+
+**Discount Validation**:
+- Optional: discountPrice not required
+- Must be positive if provided
+- Must be less than price
+
+### Service Slug Generation
+
+Slugs are auto-generated from service names and must be unique within a salon:
+
+- Source: Service name ("Men Haircut" → "men-haircut")
+- Format: lowercase, alphanumeric, hyphens only
+- Scope: Unique per salon (allows "haircut" in Salon A and Salon B)
+- Uniqueness handling: Appends counter (-2, -3, etc.) or timestamp fallback
+
+Example:
+```
+Salon A: Men Haircut → "men-haircut"
+Salon A: Men Haircut (duplicate) → "men-haircut-2"
+Salon B: Men Haircut → "men-haircut" (allowed, different salon)
+```
+
+### Authorization
+
+| Role | Create | Read | Update | Delete | Notes |
+|------|:------:|:----:|:------:|:------:|-------|
+| CUSTOMER | ✗ | ✓ Active only | ✗ | ✗ | Can view active services |
+| BARBER | ✗ | ✓ | ✗ | ✗ | Can view salon services |
+| SALON_OWNER | ✓ Own | ✓ Own | ✓ Own | ✓ Own | Create/manage own services |
+| SALON_STAFF | ✗ | ✓ | ✗ | ✗ | Read-only access |
+| ADMIN | ✓ | ✓ | ✓ | ✓ | Full access |
+| SUPER_ADMIN | ✓ | ✓ | ✓ | ✓ | Full access |
+
+**Security Rules**:
+- SALON_OWNER must own the salon to create/update/delete services
+- salonId cannot be changed after creation
+- slug is immutable (regenerated only if name changes during update)
+- ADMIN/SUPER_ADMIN can manage any salon's services
+- Public users only see active (isActive=true) services
+
+### Service CRUD API
+
+**Create Service**
+```
+POST /api/services
+Authorization: Required (SALON_OWNER, ADMIN, SUPER_ADMIN)
+Body: {
+  salonId: string (MongoDB ID),
+  name: string,
+  description?: string,
+  category: string,
+  duration: number,
+  price: number,
+  discountPrice?: number,
+  image?: string
+}
+Response: 201 Created { success: true, data: Service }
+```
+
+**List Services**
+```
+GET /api/services?salonId=xxx&category=HAIRCUT&search=hair&page=1&limit=10&sortBy=createdAt
+Authorization: Optional
+Query Parameters:
+  - salonId: Filter by salon
+  - category: Filter by category
+  - isActive: true (default, shows active only for public)
+  - search: Search name and description
+  - page: Page number (default 1)
+  - limit: Results per page (default 10, max 50)
+  - sortBy: createdAt | name | price | duration
+
+Response: 200 OK {
+  success: true,
+  data: Service[],
+  pagination: { page, limit, total, totalPages }
+}
+```
+
+**Get Single Service**
+```
+GET /api/services/[id]
+Authorization: Optional
+Response: 200 OK { success: true, data: Service }
+- Public users see only active services
+- Authorized users can see inactive services if they own the salon
+- Returns 404 if inactive and not authorized
+```
+
+**Update Service**
+```
+PATCH /api/services/[id]
+Authorization: Required (Owner or Admin)
+Body: {
+  name?: string,
+  description?: string,
+  category?: string,
+  duration?: number,
+  price?: number,
+  discountPrice?: number,
+  image?: string
+}
+Response: 200 OK { success: true, data: Service }
+- Salon and slug cannot be changed
+- Name change triggers slug regeneration with uniqueness check
+```
+
+**Deactivate Service (Soft Delete)**
+```
+DELETE /api/services/[id]
+Authorization: Required (Owner or Admin)
+Response: 200 OK { success: true, message: "Service deactivated" }
+- Sets isActive=false (no hard delete)
+- Service hidden from public listings
+- Preserves historical data for future bookings
+```
+
+**Toggle Service Status**
+```
+PATCH /api/services/[id]/status
+Authorization: Required (Owner or Admin)
+Body: { isActive: boolean }
+Response: 200 OK { success: true, data: Service }
+- Activate or deactivate service
+- Only authorized users can toggle status
+```
+
+### Service Layer
+
+**File**: `src/services/service.service.ts`
+
+Key functions:
+- `createService(input, currentUser)` - Create with validation and slug generation
+- `getServiceById(id, currentUser?)` - Get single service with public/private visibility
+- `listServices(options)` - List with pagination, filtering, search
+- `updateService(id, input, currentUser)` - Update with authorization
+- `updateServiceStatus(id, isActive, currentUser)` - Toggle status
+- `deleteService(id, currentUser)` - Soft delete
+- `getServicesBySalon(salonId)` - Get all services for salon
+
+### Public Service Discovery
+
+**Page**: `/services`
+
+Features:
+- Search services by name/description
+- Filter by category
+- View service cards with:
+  - Service image
+  - Name and salon name
+  - Category badge
+  - Duration (minutes)
+  - Price and discount price (if applicable)
+  - Link to salon detail
+- Pagination with numbered buttons
+- Empty state messaging
+
+### Salon Service Management
+
+**Page**: `/salon/services`
+
+Features:
+- Salon selector dropdown
+- List of salon services with:
+  - Service name and description
+  - Category badge
+  - Duration and pricing
+  - Active/inactive status badge
+  - Action buttons: activate/deactivate, delete
+- Create new service form with fields:
+  - Service name
+  - Category selector
+  - Duration (minutes)
+  - Price (₹)
+  - Discount price (₹) - optional
+  - Description
+  - Image URL
+- Search and filter services
+- Form validation and error messages
+
+### Validation
+
+**ServiceCreateSchema**:
+- `salonId`: 24-character MongoDB ID (required)
+- `name`: 2-100 characters (required)
+- `category`: Must be in SERVICE_CATEGORY enum (required)
+- `duration`: 5-480 minutes (required)
+- `price`: Positive integer in paise (required)
+- `discountPrice`: Optional, must be less than price
+- `image`: Optional URL format
+
+**ServiceUpdateSchema**:
+- All fields optional
+- Discount price validation same as create
+
+**ServiceStatusSchema**:
+- `isActive`: Boolean (required)
+
+### Error Handling
+
+**HTTP Status Codes**:
+- 201: Service created successfully
+- 200: Success
+- 400: Invalid request data or validation error
+- 401: Authentication required
+- 403: Authorization denied (not owner/admin)
+- 404: Service or salon not found
+- 409: Duplicate slug conflict (handled gracefully with counter)
+- 500: Server error
+
+**Error Response Format**:
+```json
+{
+  "success": false,
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "User-friendly message"
+  }
+}
+```
+
+### Currency Formatting
+
+**Utility**: `src/utils/currency.ts`
+
+Functions:
+- `formatCurrency(paise)` - Convert paise to ₹ display format
+  - Example: 30000 → "₹300"
+- `convertToPaise(inr)` - Convert INR to paise for storage
+  - Example: 300 → 30000
+- `convertToINR(paise)` - Convert paise to INR
+  - Example: 30000 → 300
+
+### Database Indexing
+
+Indexes on Service collection:
+- `salon` (single index) - Query services by salon
+- `category` (single index) - Filter by category
+- `isActive` (single index) - Filter active services
+- `salon + slug` (compound, unique) - Ensure unique slug within salon
+- `createdAt` (single index) - Sort by newest
+
+### Files Created/Modified
+
+**New Files**:
+- `src/utils/currency.ts` - Currency formatting utility
+- `src/services/service.service.ts` - Service business logic layer
+- `src/app/api/services/route.ts` - POST and GET endpoints
+- `src/app/api/services/[id]/route.ts` - GET, PATCH, DELETE endpoints
+- `src/app/api/services/[id]/status/route.ts` - Status toggle endpoint
+- `src/app/services/page.tsx` - Public service discovery page
+- `src/app/salon/services/page.tsx` - Salon service management page
+
+**Modified Files**:
+- `src/validations/service.schema.ts` - Updated with improved validation
+- `README.md` - Added Service Management Architecture section
+
+### Security Implementation
+
+✅ Authentication: `requireAuth()` on all protected endpoints
+✅ Authorization: Role-based access control with ownership verification
+✅ Field Protection: Salon and slug immutable after creation
+✅ Input Validation: Zod schemas with custom refinements
+✅ Server-Side Validation: No reliance on client validation
+✅ IDOR Prevention: Always verify salon ownership server-side
+✅ Soft Deletion: No hard deletes, preserves historical data
+✅ Error Safety: No sensitive data in error messages
+✅ Pricing Validation: discountPrice < price enforcement
+✅ Pagination Security: Max 50 results per request
+
+### Future Compatibility
+
+The service system is designed to support future features:
+- Service availability and slot management (for booking)
+- Barber specialization matching (pair barbers with services)
+- Service variations (e.g., Hair Color: Basic vs Premium)
+- Service bundles and packages
+- Seasonal pricing and promotions (when implemented)
+
+Does NOT implement:
+- Booking logic (Phase 7+)
+- Availability slots (Phase 7+)
+- Pricing overrides per barber (Phase 8+)
+- Dynamic pricing (Phase 8+)
+
 ## Current Status
 
-**Phase 4: Authentication & Role-Based Authorization Foundation COMPLETE**
+**Phase 6: Service Management & Salon Service Catalog COMPLETE**
 
 Completed phases:
 - ✅ Phase 1: Next.js foundation, TypeScript, Tailwind CSS, MongoDB setup

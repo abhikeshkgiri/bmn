@@ -8,20 +8,6 @@ import { Spinner } from '@/components/ui/Loading';
 import { USER_ROLES } from '@/constants/roles';
 import Link from 'next/link';
 
-interface SalonForDashboard {
-  _id: string;
-  name: string;
-  slug: string;
-  description?: string;
-  logo?: string;
-  address: {
-    city: string;
-  };
-  isActive: boolean;
-  isVerified: boolean;
-  rating: number;
-}
-
 export default function SalonDashboard() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
