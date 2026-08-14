@@ -72,6 +72,27 @@ export const BookingCancelSchema = z.object({
 export type BookingCancelInput = z.infer<typeof BookingCancelSchema>;
 
 /**
+ * Booking reschedule schema
+ * Customer reschedules their appointment
+ */
+export const BookingRescheduleSchema = z
+  .object({
+    appointmentDate: z
+      .string()
+      .refine(
+        (date) => {
+          const d = new Date(date);
+          return d instanceof Date && !isNaN(d.getTime());
+        },
+        'Invalid date format'
+      ),
+    startTime: timeFormatSchema,
+  })
+  .strict();
+
+export type BookingRescheduleInput = z.infer<typeof BookingRescheduleSchema>;
+
+/**
  * Booking status update schema
  */
 export const BookingStatusUpdateSchema = z.object({

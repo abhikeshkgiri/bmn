@@ -8,7 +8,7 @@ import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
 import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
 import { formatCurrency } from '@/utils/currency';
-import { Calendar, MapPin, User, Clock } from 'lucide-react';
+import { Calendar, MapPin, User, Clock, ChevronRight } from 'lucide-react';
 
 interface Booking {
   _id: string;
@@ -70,41 +70,92 @@ const PAYMENT_STATUS_LABELS: Record<string, string> = {
   [PAYMENT_STATUS.PARTIALLY_REFUNDED]: 'Partially Refunded',
 };
 
+type FilterTab = 'all' | 'upcoming' | 'today' | 'completed' | 'cancelled';
+
 export default function BookingsPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [pagination, setPagination] = useState({
     total: 0,
     limit: 10,
     totalPages: 0,
   });
 
-  const fetchBookings = useCallback(async (pageNum: number) => {
-    try {
-      setLoading(true);
-      const response = await fetch(`/api/bookings?page=${pageNum}&limit=10`);
-      const result = await response.json() as {
-        success: boolean;
-        data?: Booking[];
-        pagination?: { page: number; limit: number; total: number; totalPages: number };
-      };
-
-      if (result.success && result.data && result.pagination) {
-        setBookings(result.data);
-        setPagination(result.pagination);
-      }
-    } catch (error) {
-      console.error('Failed to fetch bookings:', error);
-    } finally {
-      setLoading(false);
+  const getStatusFilter = (tab: FilterTab): string | undefined => {
+    switch (tab) {
+      case 'completed':
+        return BOOKING_STATUS.COMPLETED;
+      case 'cancelled':
+        return BOOKING_STATUS.CANCELLED;
+      default:
+        return undefined;
     }
-  }, []);
+  };
+
+  const filterBookingsByDate = (bookings: Booking[], tab: FilterTab): Booking[] => {
+    if (tab === 'all' || tab === 'completed' || tab === 'cancelled') {
+      return bookings;
+    }
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    return bookings.filter((booking) => {
+      const appointmentDate = new Date(booking.appointmentDate);
+      const appointmentDay = new Date(appointmentDate.getFullYear(), appointmentDate.getMonth(), appointmentDate.getDate());
+
+      if (tab === 'today') {
+        return appointmentDay.getTime() === today.getTime();
+      }
+
+      // upcoming
+      return appointmentDay.getTime() >= today.getTime();
+    });
+  };
+
+  const fetchBookings = useCallback(
+    async (pageNum: number) => {
+      try {
+        setLoading(true);
+        const statusFilter = getStatusFilter(activeTab);
+        const url = statusFilter
+          ? `/api/bookings?page=${pageNum}&limit=10&status=${statusFilter}`
+          : `/api/bookings?page=${pageNum}&limit=10`;
+
+        const response = await fetch(url);
+        const result = await response.json() as {
+          success: boolean;
+          data?: Booking[];
+          pagination?: { page: number; limit: number; total: number; totalPages: number };
+        };
+
+        if (result.success && result.data && result.pagination) {
+          const filteredBookings = filterBookingsByDate(result.data, activeTab);
+          setBookings(filteredBookings);
+          setPagination(result.pagination);
+        }
+      } catch (error) {
+        console.error('Failed to fetch bookings:', error);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [activeTab]
+  );
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchBookings(page);
   }, [page, fetchBookings]);
+
+  const handleTabChange = (tab: FilterTab) => {
+    setActiveTab(tab);
+    setPage(1);
+  };
 
   if (loading && bookings.length === 0) {
     return (
@@ -121,6 +172,23 @@ export default function BookingsPage() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-foreground mb-2">My Bookings</h1>
           <p className="text-foreground-secondary">View and manage your appointments</p>
+        </div>
+
+        {/* Filter Tabs */}
+        <div className="flex gap-2 mb-8 flex-wrap border-b border-gray-200">
+          {['all', 'upcoming', 'today', 'completed', 'cancelled'].map((tab) => (
+            <button
+              key={tab}
+              onClick={() => handleTabChange(tab as FilterTab)}
+              className={`px-4 py-3 text-sm font-medium transition-colors ${
+                activeTab === tab
+                  ? 'border-b-2 border-brand-pink text-brand-pink'
+                  : 'text-foreground-secondary hover:text-foreground'
+              }`}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
         </div>
 
         {/* Bookings List */}
@@ -159,6 +227,11 @@ export default function BookingsPage() {
                             <span>{booking.barber.name}</span>
                           </div>
 
+                          {/* Service */}
+                          <div className="text-sm text-foreground-secondary">
+                            <span className="font-medium">{booking.service.name}</span>
+                          </div>
+
                           {/* Date and time */}
                           <div className="flex items-center gap-2">
                             <Calendar size={16} />
@@ -184,9 +257,12 @@ export default function BookingsPage() {
                             {formatCurrency(booking.totalAmount)}
                           </p>
                         </div>
-                        <Button variant="primary" size="sm">
-                          View Details
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button variant="ghost" size="sm">
+                            View Details
+                          </Button>
+                          <ChevronRight size={16} className="text-foreground-secondary" />
+                        </div>
                       </div>
                     </div>
                   </Card>
@@ -231,10 +307,12 @@ export default function BookingsPage() {
           </>
         ) : (
           <Card className="p-12 text-center">
-            <p className="text-foreground-secondary mb-6">No bookings yet</p>
-            <Button variant="primary">
-              Book an Appointment
-            </Button>
+            <p className="text-foreground-secondary mb-6">No bookings found</p>
+            <Link href="/book/salons">
+              <Button variant="primary">
+                Book an Appointment
+              </Button>
+            </Link>
           </Card>
         )}
       </div>

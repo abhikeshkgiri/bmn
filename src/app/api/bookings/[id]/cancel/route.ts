@@ -1,12 +1,15 @@
 /**
  * PATCH /api/bookings/[id]/cancel
  * Cancel a booking
+ * Handles refund if booking is paid
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { cancelBooking } from '@/services/booking.service';
+import { processRefund, getPaymentByBooking } from '@/services/payment.service';
 import { BookingCancelSchema } from '@/validations/booking.schema';
+import { PAYMENT_STATUS } from '@/constants/booking';
 import { ZodError } from 'zod';
 
 interface Params {
@@ -38,6 +41,30 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     // Cancel booking through service layer
     const booking = await cancelBooking(id, currentUser, validatedInput.cancellationReason);
+
+    // Handle refund if booking is paid
+    if (booking.paymentStatus === PAYMENT_STATUS.PAID) {
+      try {
+        const payment = await getPaymentByBooking(id, currentUser);
+        if (payment && payment.status === PAYMENT_STATUS.PAID) {
+          await processRefund(payment._id.toString(), payment.amount, 'Booking cancelled by customer');
+        }
+      } catch (refundError) {
+        console.error('Refund processing failed:', refundError);
+        // Don't fail the cancellation if refund fails - refund can be retried
+        // But return info about refund failure to client
+        return NextResponse.json(
+          {
+            success: true,
+            data: booking,
+            warning: {
+              message: 'Booking cancelled but refund processing failed. Please contact support.',
+            },
+          },
+          { status: 200 }
+        );
+      }
+    }
 
     return NextResponse.json(
       {

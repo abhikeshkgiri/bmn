@@ -71,8 +71,10 @@ export default function BookingDetailPage() {
   const [booking, setBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [rescheduling, setRescheduling] = useState(false);
   const [error, setError] = useState('');
   const [canCancel, setCanCancel] = useState(false);
+  const [canReschedule, setCanReschedule] = useState(false);
   const [paymentOrder, setPaymentOrder] = useState<null | {
     orderId: string;
     amount: number;
@@ -81,6 +83,9 @@ export default function BookingDetailPage() {
     bookingNumber: string;
   }>(null);
   const [retryingPayment, setRetryingPayment] = useState(false);
+  const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleTime, setRescheduleTime] = useState('');
 
   const fetchBooking = useCallback(async () => {
     try {
@@ -113,6 +118,13 @@ export default function BookingDetailPage() {
     setCanCancel(
       booking.status !== BOOKING_STATUS.CANCELLED &&
         booking.status !== BOOKING_STATUS.COMPLETED &&
+        minutesUntilAppointment >= BOOKING_CANCELLATION_MINUTES
+    );
+
+    // Can reschedule if booking is pending or confirmed and not too close to appointment
+    setCanReschedule(
+      booking.status === BOOKING_STATUS.PENDING ||
+        booking.status === BOOKING_STATUS.CONFIRMED &&
         minutesUntilAppointment >= BOOKING_CANCELLATION_MINUTES
     );
   }, [booking]);
@@ -148,7 +160,7 @@ export default function BookingDetailPage() {
 
       if (result.success) {
         setBooking(result.data);
-        alert('Booking cancelled successfully');
+        alert('Booking cancelled successfully. Refund will be processed shortly.');
       } else {
         alert('Error: ' + result.error?.message);
       }
@@ -157,6 +169,51 @@ export default function BookingDetailPage() {
     } finally {
       setCancelling(false);
     }
+  };
+
+  const handleReschedule = async () => {
+    if (!booking || !rescheduleDate || !rescheduleTime) {
+      alert('Please select both date and time');
+      return;
+    }
+
+    try {
+      setRescheduling(true);
+      const response = await fetch(`/api/bookings/${booking._id}/reschedule`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appointmentDate: rescheduleDate,
+          startTime: rescheduleTime,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setBooking(result.data);
+        setShowRescheduleModal(false);
+        setRescheduleDate('');
+        setRescheduleTime('');
+        alert('Booking rescheduled successfully!');
+      } else {
+        alert('Error: ' + result.error?.message);
+      }
+    } catch (error) {
+      console.error('Reschedule error:', error);
+      alert('Failed to reschedule booking');
+    } finally {
+      setRescheduling(false);
+    }
+  };
+
+  const handleBookAgain = () => {
+    if (!booking) return;
+    // Redirect to booking flow with service pre-selected
+    // Query params are passed but never trusted server-side
+    router.push(
+      `/book/${booking.salon._id}?serviceId=${booking.service._id}&barberId=${booking.barber._id}`
+    );
   };
 
   const handleRetryPayment = async () => {
@@ -462,8 +519,74 @@ export default function BookingDetailPage() {
             </div>
           </Card>
 
+          {/* Reschedule Modal */}
+          {showRescheduleModal && (
+            <Card className="p-6 bg-blue-50 border border-blue-200">
+              <h3 className="font-bold text-lg mb-4">Reschedule Appointment</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">New Date</label>
+                  <input
+                    type="date"
+                    value={rescheduleDate}
+                    onChange={(e) => setRescheduleDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">New Time</label>
+                  <input
+                    type="time"
+                    value={rescheduleTime}
+                    onChange={(e) => setRescheduleTime(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant="primary"
+                    fullWidth
+                    onClick={handleReschedule}
+                    disabled={rescheduling}
+                  >
+                    {rescheduling ? 'Rescheduling...' : 'Confirm Reschedule'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    fullWidth
+                    onClick={() => {
+                      setShowRescheduleModal(false);
+                      setRescheduleDate('');
+                      setRescheduleTime('');
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          )}
+
           {/* Action Buttons */}
-          <div className="flex gap-3">
+          <div className="grid grid-cols-2 gap-3 md:flex md:gap-3">
+            {canReschedule && booking.status !== BOOKING_STATUS.CANCELLED && !showRescheduleModal && (
+              <Button
+                variant="secondary"
+                fullWidth
+                onClick={() => setShowRescheduleModal(true)}
+              >
+                Reschedule
+              </Button>
+            )}
+            {booking.status === BOOKING_STATUS.COMPLETED && (
+              <Button
+                variant="secondary"
+                fullWidth
+                onClick={handleBookAgain}
+              >
+                Book Again
+              </Button>
+            )}
             {canCancel && (
               <Button
                 variant="ghost"
@@ -472,7 +595,7 @@ export default function BookingDetailPage() {
                 disabled={cancelling}
                 className="text-red-600 hover:text-red-700"
               >
-                {cancelling ? 'Cancelling...' : 'Cancel Booking'}
+                {cancelling ? 'Cancelling...' : 'Cancel'}
               </Button>
             )}
             <Button
@@ -480,7 +603,7 @@ export default function BookingDetailPage() {
               fullWidth
               onClick={() => router.push('/bookings')}
             >
-              Back to Bookings
+              Back
             </Button>
           </div>
         </div>

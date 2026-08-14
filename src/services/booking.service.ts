@@ -280,8 +280,8 @@ export async function getAvailableSlots(
     throw BOOKING_ERRORS.INVALID_SALON;
   }
 
-  const barber = await Barber.findById(barberId);
-  if (!barber) {
+  const barberExists = await Barber.exists({ _id: barberId });
+  if (!barberExists) {
     throw BOOKING_ERRORS.INVALID_BARBER;
   }
 
@@ -405,6 +405,7 @@ export async function getBookingById(bookingId: string, currentUser: AuthUser): 
 
 /**
  * Cancel booking with authorization
+ * Integrates with payment refund if booking is paid
  */
 export async function cancelBooking(
   bookingId: string,
@@ -478,6 +479,98 @@ export async function updateBookingStatus(
   }
 
   booking.status = newStatus;
+  await booking.save();
+
+  return booking.populate(['customer', 'salon', 'barber', 'service']);
+}
+
+/**
+ * Reschedule a booking
+ * Customer can change appointment date and time
+ */
+export async function rescheduleBooking(
+  bookingId: string,
+  newAppointmentDate: string,
+  newStartTime: string,
+  currentUser: AuthUser
+): Promise<IBooking> {
+  await connectDB();
+
+  const booking = await Booking.findById(bookingId).populate(['salon', 'barber', 'service']);
+  if (!booking) {
+    throw BOOKING_ERRORS.BOOKING_NOT_FOUND;
+  }
+
+  // Authorization: customer can only reschedule their own booking
+  if (currentUser.role === 'CUSTOMER' && booking.customer.toString() !== currentUser._id) {
+    throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
+
+  // Can only reschedule if booking is PENDING or CONFIRMED
+  if (![BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED].includes(booking.status)) {
+    throw { code: 'CANNOT_RESCHEDULE', message: 'Cannot reschedule completed, cancelled, or in-progress bookings' };
+  }
+
+  // Check if current appointment is in the future (must not be within cancellation window of old appointment)
+  const oldAppointmentDateTime = new Date(booking.appointmentDate);
+  const [oldHours, oldMinutes] = booking.startTime.split(':').map(Number);
+  oldAppointmentDateTime.setHours(oldHours, oldMinutes, 0, 0);
+  const now = new Date();
+  const minutesUntilOldAppointment = (oldAppointmentDateTime.getTime() - now.getTime()) / (1000 * 60);
+
+  if (minutesUntilOldAppointment < BOOKING_CANCELLATION_MINUTES) {
+    throw BOOKING_ERRORS.CANNOT_CANCEL;
+  }
+
+  // Validate new appointment date
+  const newDate = new Date(newAppointmentDate);
+  if (!isDateBookable(newDate, BOOKING_MIN_DAYS_AHEAD, BOOKING_MAX_DAYS_AHEAD)) {
+    throw BOOKING_ERRORS.INVALID_DATE;
+  }
+
+  // Validate new date and time are not in past
+  if (isAppointmentInPast(newDate, newStartTime)) {
+    throw BOOKING_ERRORS.DATE_IN_PAST;
+  }
+
+  // Get service (it might have changed, so always fetch fresh)
+  const service = await Service.findById(booking.service._id);
+  if (!service || !service.isActive) {
+    throw BOOKING_ERRORS.INVALID_SERVICE;
+  }
+
+  // Calculate new end time
+  const newEndTime = calculateEndTime(newStartTime, service.duration);
+
+  // Validate time format and range
+  if (!isValidTimeRange(newStartTime, newEndTime)) {
+    throw BOOKING_ERRORS.INVALID_TIME;
+  }
+
+  // Check for overlapping bookings with the new time (excluding this booking)
+  const existingBooking = await Booking.findOne({
+    _id: { $ne: new Types.ObjectId(bookingId) },
+    barber: booking.barber._id,
+    appointmentDate: {
+      $gte: new Date(newDate.toDateString()),
+      $lt: new Date(new Date(newDate).setDate(newDate.getDate() + 1)),
+    },
+    startTime: { $exists: true },
+    endTime: { $exists: true },
+    status: { $in: [BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
+  });
+
+  if (existingBooking) {
+    const hasOverlap = isTimeOverlap(existingBooking.startTime, existingBooking.endTime, newStartTime, newEndTime);
+    if (hasOverlap) {
+      throw BOOKING_ERRORS.OVERLAPPING_BOOKING;
+    }
+  }
+
+  // Update booking with new date/time
+  booking.appointmentDate = newDate;
+  booking.startTime = newStartTime;
+  booking.endTime = newEndTime;
   await booking.save();
 
   return booking.populate(['customer', 'salon', 'barber', 'service']);
