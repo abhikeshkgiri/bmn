@@ -14,7 +14,8 @@ export async function GET() {
       );
     }
 
-    if (![USER_ROLES.SALON_OWNER, USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(currentUser.role)) {
+    const salonAdminRoles = [USER_ROLES.SALON_OWNER, USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN] as const;
+    if (!salonAdminRoles.includes(currentUser.role as (typeof salonAdminRoles)[number])) {
       return NextResponse.json(
         { success: false, error: { code: 'FORBIDDEN', message: 'Access denied' } },
         { status: 403 }

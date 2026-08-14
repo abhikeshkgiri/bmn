@@ -619,7 +619,8 @@ export async function getBookingById(bookingId: string, currentUser: AuthUser): 
     }
   }
 
-  if (![USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(currentUser.role)) {
+  const adminRoles = [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN] as const;
+  if (!adminRoles.includes(currentUser.role as (typeof adminRoles)[number])) {
     // Admin/super-admin can view any booking
   }
 
