@@ -12,6 +12,7 @@ import Service, { type IService } from '@/models/Service';
 import { connectDB } from '@/lib/db';
 import type { AuthUser } from '@/types';
 import { BOOKING_STATUS, PAYMENT_STATUS, BOOKING_TYPE } from '@/constants/booking';
+import { USER_ROLES } from '@/constants/roles';
 import {
   BOOKING_CANCELLATION_MINUTES,
   BOOKING_MAX_DAYS_AHEAD,
@@ -200,6 +201,223 @@ async function checkOverlappingBookings(
   return isTimeOverlap(existingBooking.startTime, existingBooking.endTime, startTime, endTime);
 }
 
+export async function getSalonDashboardStats(salonId: string, currentUser: AuthUser): Promise<{
+  salon: ISalon | null;
+  stats: {
+    todayBookings: number;
+    upcomingBookings: number;
+    completedBookings: number;
+    cancelledBookings: number;
+    todayRevenue: number;
+    totalBookings: number;
+    pendingBookings: number;
+  };
+  todayAppointments: IBooking[];
+  upcomingAppointments: IBooking[];
+}> {
+  await connectDB();
+
+  const salon = await Salon.findById(salonId);
+  if (!salon) {
+    throw BOOKING_ERRORS.INVALID_SALON;
+  }
+
+  const isOwner = salon.owner.toString() === currentUser._id;
+  const isAdmin = [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(currentUser.role as typeof USER_ROLES.ADMIN);
+  if (currentUser.role !== USER_ROLES.SALON_OWNER && !isAdmin && !isOwner) {
+    throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
+
+  const allBookings = await Booking.find({ salon: salon._id })
+    .populate(['customer', 'barber', 'service'])
+    .sort({ appointmentDate: 1, startTime: 1 });
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayStart = new Date(today);
+  const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
+  const todayAppointments = allBookings.filter((booking) => {
+    const bookingDate = new Date(booking.appointmentDate);
+    return bookingDate >= todayStart && bookingDate < todayEnd;
+  });
+
+  const upcomingAppointments = allBookings.filter((booking) => {
+    const bookingDate = new Date(booking.appointmentDate);
+    return bookingDate >= todayEnd && booking.status !== BOOKING_STATUS.CANCELLED;
+  });
+
+  const todayRevenue = todayAppointments.reduce((sum, booking) => {
+    return booking.paymentStatus === PAYMENT_STATUS.PAID ? sum + (booking.totalAmount || 0) : sum;
+  }, 0);
+
+  const stats = {
+    todayBookings: todayAppointments.length,
+    upcomingBookings: upcomingAppointments.length,
+    completedBookings: allBookings.filter((booking) => booking.status === BOOKING_STATUS.COMPLETED).length,
+    cancelledBookings: allBookings.filter((booking) => booking.status === BOOKING_STATUS.CANCELLED).length,
+    todayRevenue,
+    totalBookings: allBookings.length,
+    pendingBookings: allBookings.filter((booking) => booking.status === BOOKING_STATUS.PENDING).length,
+  };
+
+  return {
+    salon,
+    stats,
+    todayAppointments: todayAppointments.slice(0, 10),
+    upcomingAppointments: upcomingAppointments.slice(0, 10),
+  };
+}
+
+export async function getSalonBookings(
+  ownerId: string,
+  currentUser: AuthUser,
+  options: { page: number; limit: number; status?: string; paymentStatus?: string; barberId?: string }
+): Promise<{ bookings: IBooking[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
+  await connectDB();
+
+  const salon = await Salon.findOne({ owner: new Types.ObjectId(ownerId) });
+  if (!salon && currentUser.role !== USER_ROLES.ADMIN && currentUser.role !== USER_ROLES.SUPER_ADMIN) {
+    throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
+
+  const targetSalonId = salon ? salon._id : undefined;
+  const query: Record<string, unknown> = {};
+
+  if (currentUser.role === USER_ROLES.SALON_OWNER) {
+    query.salon = salon!._id;
+  } else if (currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN) {
+    if (options.barberId) { query.barber = new Types.ObjectId(options.barberId); }
+  }
+
+  if (targetSalonId) {
+    query.salon = targetSalonId;
+  }
+
+  if (options.status) query.status = options.status;
+  if (options.paymentStatus) query.paymentStatus = options.paymentStatus;
+  if (options.barberId && currentUser.role === USER_ROLES.SALON_OWNER) {
+    query.barber = new Types.ObjectId(options.barberId);
+  }
+
+  const total = await Booking.countDocuments(query);
+  const totalPages = Math.ceil(total / options.limit);
+
+  const bookings = await Booking.find(query)
+    .populate(['customer', 'salon', 'barber', 'service'])
+    .sort({ appointmentDate: -1, startTime: -1 })
+    .skip((options.page - 1) * options.limit)
+    .limit(options.limit);
+
+  return {
+    bookings,
+    pagination: {
+      page: options.page,
+      limit: options.limit,
+      total,
+      totalPages,
+    },
+  };
+}
+
+export async function getBarberDashboardStats(barberId: string, currentUser: AuthUser): Promise<{
+  barber: IBarber | null;
+  stats: {
+    todayAppointments: number;
+    upcomingAppointments: number;
+    completedAppointments: number;
+    remainingAppointments: number;
+  };
+  todayAppointments: IBooking[];
+  upcomingAppointments: IBooking[];
+}> {
+  await connectDB();
+
+  const barber = await Barber.findById(barberId).populate(['salon', 'services']);
+  if (!barber) {
+    throw BOOKING_ERRORS.INVALID_BARBER;
+  }
+
+  if (currentUser.role === USER_ROLES.BARBER) {
+    const matchingBarber = await Barber.findOne({ _id: barberId, user: currentUser._id });
+    if (!matchingBarber) {
+      throw BOOKING_ERRORS.UNAUTHORIZED;
+    }
+  }
+
+  const allBookings = await Booking.find({ barber: barber._id })
+    .populate(['customer', 'salon', 'service'])
+    .sort({ appointmentDate: 1, startTime: 1 });
+
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
+  const todayAppointments = allBookings.filter((booking) => {
+    const bookingDate = new Date(booking.appointmentDate);
+    return bookingDate >= todayStart && bookingDate < todayEnd;
+  });
+
+  const upcomingAppointments = allBookings.filter((booking) => {
+    const bookingDate = new Date(booking.appointmentDate);
+    return bookingDate >= todayEnd && booking.status !== BOOKING_STATUS.CANCELLED;
+  });
+
+  return {
+    barber,
+    stats: {
+      todayAppointments: todayAppointments.length,
+      upcomingAppointments: upcomingAppointments.length,
+      completedAppointments: allBookings.filter((booking) => booking.status === BOOKING_STATUS.COMPLETED).length,
+      remainingAppointments: todayAppointments.filter((booking) => booking.status !== BOOKING_STATUS.COMPLETED && booking.status !== BOOKING_STATUS.CANCELLED).length,
+    },
+    todayAppointments: todayAppointments.slice(0, 10),
+    upcomingAppointments: upcomingAppointments.slice(0, 10),
+  };
+}
+
+export async function getBarberBookings(
+  barberId: string,
+  currentUser: AuthUser,
+  options: { page: number; limit: number; status?: string }
+): Promise<{ bookings: IBooking[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
+  await connectDB();
+
+  const barber = await Barber.findById(barberId);
+  if (!barber) {
+    throw BOOKING_ERRORS.INVALID_BARBER;
+  }
+
+  if (currentUser.role === USER_ROLES.BARBER) {
+    const matchedBarber = await Barber.findOne({ _id: barberId, user: currentUser._id });
+    if (!matchedBarber) {
+      throw BOOKING_ERRORS.UNAUTHORIZED;
+    }
+  }
+
+  const query: Record<string, unknown> = { barber: new Types.ObjectId(barberId) };
+  if (options.status) query.status = options.status;
+
+  const total = await Booking.countDocuments(query);
+  const totalPages = Math.ceil(total / options.limit);
+
+  const bookings = await Booking.find(query)
+    .populate(['customer', 'salon', 'barber', 'service'])
+    .sort({ appointmentDate: -1, startTime: -1 })
+    .skip((options.page - 1) * options.limit)
+    .limit(options.limit);
+
+  return {
+    bookings,
+    pagination: {
+      page: options.page,
+      limit: options.limit,
+      total,
+      totalPages,
+    },
+  };
+}
+
 /**
  * Create a new booking
  * Performs all validation and creates booking atomically
@@ -377,12 +595,11 @@ export async function getBookingById(bookingId: string, currentUser: AuthUser): 
     return null;
   }
 
-  // Authorization check
-  if (currentUser.role === 'CUSTOMER' && booking.customer._id.toString() !== currentUser._id) {
+  if (currentUser.role === USER_ROLES.CUSTOMER && booking.customer._id.toString() !== currentUser._id) {
     throw BOOKING_ERRORS.UNAUTHORIZED;
   }
 
-  if (currentUser.role === 'SALON_OWNER') {
+  if (currentUser.role === USER_ROLES.SALON_OWNER) {
     const salon = await Salon.findOne({
       _id: booking.salon._id,
       owner: new Types.ObjectId(currentUser._id),
@@ -392,11 +609,17 @@ export async function getBookingById(bookingId: string, currentUser: AuthUser): 
     }
   }
 
-  if (currentUser.role === 'BARBER' && booking.barber._id.toString() !== currentUser._id) {
-    throw BOOKING_ERRORS.UNAUTHORIZED;
+  if (currentUser.role === USER_ROLES.BARBER) {
+    const barber = await Barber.findOne({
+      _id: booking.barber._id,
+      user: new Types.ObjectId(currentUser._id),
+    });
+    if (!barber) {
+      throw BOOKING_ERRORS.UNAUTHORIZED;
+    }
   }
 
-  if (!['ADMIN', 'SUPER_ADMIN'].includes(currentUser.role)) {
+  if (![USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(currentUser.role)) {
     // Admin/super-admin can view any booking
   }
 
@@ -459,16 +682,38 @@ export async function updateBookingStatus(
     throw BOOKING_ERRORS.BOOKING_NOT_FOUND;
   }
 
-  // Only admin, salon owner, and salon staff can update status
-  if (!['ADMIN', 'SUPER_ADMIN', 'SALON_OWNER', 'SALON_STAFF'].includes(currentUser.role)) {
+  const isAdmin = [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(currentUser.role as typeof USER_ROLES.ADMIN);
+  const isSalonOwner = currentUser.role === USER_ROLES.SALON_OWNER;
+  const isBarber = currentUser.role === USER_ROLES.BARBER;
+
+  if (!isAdmin && !isSalonOwner && !isBarber) {
     throw BOOKING_ERRORS.UNAUTHORIZED;
   }
 
-  // Validate status transition
+  if (isSalonOwner) {
+    const salon = await Salon.findOne({
+      _id: booking.salon,
+      owner: new Types.ObjectId(currentUser._id),
+    });
+    if (!salon) {
+      throw BOOKING_ERRORS.UNAUTHORIZED;
+    }
+  }
+
+  if (isBarber) {
+    const barber = await Barber.findOne({
+      _id: booking.barber,
+      user: new Types.ObjectId(currentUser._id),
+    });
+    if (!barber) {
+      throw BOOKING_ERRORS.UNAUTHORIZED;
+    }
+  }
+
   const validTransitions: Record<string, string[]> = {
     [BOOKING_STATUS.PENDING]: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.CANCELLED],
     [BOOKING_STATUS.CONFIRMED]: [BOOKING_STATUS.IN_PROGRESS, BOOKING_STATUS.CANCELLED, BOOKING_STATUS.NO_SHOW],
-    [BOOKING_STATUS.IN_PROGRESS]: [BOOKING_STATUS.COMPLETED],
+    [BOOKING_STATUS.IN_PROGRESS]: [BOOKING_STATUS.COMPLETED, BOOKING_STATUS.NO_SHOW],
     [BOOKING_STATUS.COMPLETED]: [],
     [BOOKING_STATUS.CANCELLED]: [],
     [BOOKING_STATUS.NO_SHOW]: [],
