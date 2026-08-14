@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Loading';
 import { formatCurrency } from '@/utils/currency';
 import { ChevronRight, Check } from 'lucide-react';
+import { RazorpayCheckout } from '@/components/payment/RazorpayCheckout';
 
 interface Salon {
   _id: string;
@@ -37,7 +38,7 @@ interface TimeSlot {
   available: boolean;
 }
 
-type BookingStep = 'service' | 'barber' | 'date' | 'time' | 'review' | 'confirm';
+type BookingStep = 'service' | 'barber' | 'date' | 'time' | 'review' | 'payment';
 
 export default function BookPage() {
   const router = useRouter();
@@ -64,6 +65,15 @@ export default function BookPage() {
   // Loading states
   const [loading, setLoading] = useState(false);
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
+  const [customerProfile, setCustomerProfile] = useState<{ name: string; email?: string; phone?: string } | null>(null);
+  const [paymentOrder, setPaymentOrder] = useState<{
+    orderId: string;
+    amount: number;
+    currency: string;
+    keyId: string;
+    bookingNumber: string;
+  } | null>(null);
+  const [paymentBookingId, setPaymentBookingId] = useState<string | null>(null);
 
   const fetchServices = useCallback(async (salonId: string) => {
     try {
@@ -109,7 +119,29 @@ export default function BookPage() {
         setSalonLoading(false);
       }
     };
+
+    const fetchCustomerProfile = async () => {
+      try {
+        const response = await fetch('/api/auth/me');
+        const result = await response.json() as { success?: boolean; user?: { name?: string; email?: string; phone?: string } };
+        if (result.success && result.user) {
+          setCustomerProfile({
+            name: result.user.name || 'Customer',
+            email: result.user.email || 'customer@example.com',
+            phone: result.user.phone || '9999999999',
+          });
+        }
+      } catch {
+        setCustomerProfile({
+          name: 'Customer',
+          email: 'customer@example.com',
+          phone: '9999999999',
+        });
+      }
+    };
+
     fetchSalon();
+    fetchCustomerProfile();
   }, [salonSlug, fetchServices, fetchBarbers]);
 
   const fetchAvailableSlots = async () => {
@@ -178,15 +210,90 @@ export default function BookPage() {
       const result = await response.json();
 
       if (result.success) {
-        router.push(`/booking/${result.data._id}`);
-      } else {
-        alert('Error: ' + result.error?.message);
+        const bookingId = result.data?._id;
+        const bookingNumber = result.data?.bookingNumber || 'BOOKING';
+
+        const orderResponse = await fetch('/api/payments/create-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bookingId }),
+        });
+
+        const orderResult = await orderResponse.json();
+
+        if (orderResult.success) {
+          setPaymentBookingId(bookingId);
+          setPaymentOrder({
+            orderId: orderResult.data.orderId,
+            amount: orderResult.data.amount,
+            currency: orderResult.data.currency,
+            keyId: orderResult.data.keyId,
+            bookingNumber,
+          });
+          setStep('payment');
+          return;
+        }
+
+        alert('Payment setup failed: ' + (orderResult.error?.message || 'Unknown error'));
+        return;
       }
-    } catch (error) {
+
+      alert('Error: ' + result.error?.message);
+    } catch {
       alert('Failed to create booking');
     } finally {
       setBookingSubmitting(false);
     }
+  };
+
+  const handlePaymentSuccess = async (paymentData: {
+    razorpay_payment_id: string;
+    razorpay_order_id: string;
+    razorpay_signature: string;
+  }) => {
+    if (!paymentBookingId) return;
+
+    const response = await fetch('/api/payments/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookingId: paymentBookingId,
+        razorpay_order_id: paymentData.razorpay_order_id,
+        razorpay_payment_id: paymentData.razorpay_payment_id,
+        razorpay_signature: paymentData.razorpay_signature,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (result.success) {
+      router.push(`/booking/${paymentBookingId}`);
+      return;
+    }
+
+    alert('Payment verification failed: ' + (result.error?.message || 'Unknown error'));
+    throw new Error(result.error?.message || 'Payment verification failed');
+  };
+
+  const handlePaymentFailure = async (error: {
+    reason?: { order_id?: string };
+    order_id?: string;
+    error?: { code?: string; description?: string };
+    code?: string;
+    description?: string;
+  }) => {
+    if (!paymentBookingId) return;
+
+    await fetch('/api/payments/failure', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookingId: paymentBookingId,
+        razorpay_order_id: error?.reason?.order_id || error?.order_id || '',
+        error_code: error?.error?.code || error?.code,
+        error_description: error?.error?.description || error?.description,
+      }),
+    });
   };
 
   if (salonLoading) {
@@ -213,14 +320,14 @@ export default function BookPage() {
   }
 
   // Stepper UI
-  const steps: BookingStep[] = ['service', 'barber', 'date', 'time', 'review'];
+  const steps: BookingStep[] = ['service', 'barber', 'date', 'time', 'review', 'payment'];
   const stepLabels: Record<BookingStep, string> = {
     service: 'Service',
     barber: 'Barber',
     date: 'Date',
     time: 'Time',
     review: 'Review',
-    confirm: 'Confirm',
+    payment: 'Payment',
   };
 
   return (
@@ -469,8 +576,30 @@ export default function BookPage() {
                   disabled={bookingSubmitting}
                   fullWidth
                 >
-                  {bookingSubmitting ? 'Creating Booking...' : 'Confirm Booking'}
+                  {bookingSubmitting ? 'Creating Booking...' : 'Continue to Payment'}
                 </Button>
+              </div>
+            )}
+
+            {step === 'payment' && paymentOrder && (
+              <div className="space-y-4">
+                <h2 className="text-2xl font-bold text-foreground mb-6">Secure Payment</h2>
+                <Card className="p-6">
+                  <RazorpayCheckout
+                    orderId={paymentOrder.orderId}
+                    amount={paymentOrder.amount}
+                    currency={paymentOrder.currency}
+                    keyId={paymentOrder.keyId}
+                    bookingNumber={paymentOrder.bookingNumber}
+                    customerName={customerProfile?.name || 'Customer'}
+                    customerEmail={customerProfile?.email || 'customer@example.com'}
+                    customerPhone={customerProfile?.phone || '9999999999'}
+                    salonName={salon.name}
+                    onSuccess={handlePaymentSuccess}
+                    onFailure={handlePaymentFailure}
+                    onCancel={() => setStep('review')}
+                  />
+                </Card>
               </div>
             )}
           </div>

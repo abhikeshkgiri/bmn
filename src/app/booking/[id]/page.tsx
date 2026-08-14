@@ -6,7 +6,8 @@ import { Card } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
-import { BOOKING_STATUS } from '@/constants/booking';
+import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
+import { RazorpayCheckout } from '@/components/payment/RazorpayCheckout';
 import { formatCurrency } from '@/utils/currency';
 import { BOOKING_CANCELLATION_MINUTES } from '@/constants/booking-config';
 import { Calendar, MapPin, Clock } from 'lucide-react';
@@ -72,6 +73,14 @@ export default function BookingDetailPage() {
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState('');
   const [canCancel, setCanCancel] = useState(false);
+  const [paymentOrder, setPaymentOrder] = useState<null | {
+    orderId: string;
+    amount: number;
+    currency: string;
+    keyId: string;
+    bookingNumber: string;
+  }>(null);
+  const [retryingPayment, setRetryingPayment] = useState(false);
 
   const fetchBooking = useCallback(async () => {
     try {
@@ -84,7 +93,7 @@ export default function BookingDetailPage() {
       } else {
         setError(result.error?.message || 'Failed to load booking');
       }
-    } catch (err) {
+    } catch {
       setError('Failed to load booking');
     } finally {
       setLoading(false);
@@ -108,14 +117,14 @@ export default function BookingDetailPage() {
     );
   }, [booking]);
 
-   
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchBooking();
   }, [fetchBooking]);
 
-   
   useEffect(() => {
     if (booking) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       checkCancellationEligibility();
     }
   }, [booking, checkCancellationEligibility]);
@@ -148,6 +157,88 @@ export default function BookingDetailPage() {
     } finally {
       setCancelling(false);
     }
+  };
+
+  const handleRetryPayment = async () => {
+    if (!booking) return;
+
+    try {
+      setRetryingPayment(true);
+      const response = await fetch('/api/payments/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking._id }),
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setPaymentOrder({
+          orderId: result.data.orderId,
+          amount: result.data.amount,
+          currency: result.data.currency,
+          keyId: result.data.keyId,
+          bookingNumber: booking.bookingNumber,
+        });
+      } else {
+        alert('Payment initialization failed: ' + (result.error?.message || 'Unknown error'));
+      }
+    } catch {
+      alert('Failed to start payment');
+    } finally {
+      setRetryingPayment(false);
+    }
+  };
+
+  const handlePaymentSuccess = async (paymentData: {
+    razorpay_payment_id: string;
+    razorpay_order_id: string;
+    razorpay_signature: string;
+  }) => {
+    if (!booking) return;
+
+    const response = await fetch('/api/payments/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookingId: booking._id,
+        razorpay_order_id: paymentData.razorpay_order_id,
+        razorpay_payment_id: paymentData.razorpay_payment_id,
+        razorpay_signature: paymentData.razorpay_signature,
+      }),
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      setPaymentOrder(null);
+      await fetchBooking();
+      return;
+    }
+
+    alert('Payment verification failed: ' + (result.error?.message || 'Unknown error'));
+    throw new Error(result.error?.message || 'Payment verification failed');
+  };
+
+  const handlePaymentFailure = async (error: {
+    reason?: { order_id?: string };
+    order_id?: string;
+    error?: { code?: string; description?: string };
+    code?: string;
+    description?: string;
+  }) => {
+    if (!booking) return;
+
+    await fetch('/api/payments/failure', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookingId: booking._id,
+        razorpay_order_id: error?.reason?.order_id || error?.order_id || '',
+        error_code: error?.error?.code || error?.code,
+        error_description: error?.error?.description || error?.description,
+      }),
+    });
+
+    await fetchBooking();
   };
 
   if (loading) {
@@ -184,6 +275,18 @@ export default function BookingDetailPage() {
               {STATUS_LABELS[booking.status]}
             </Badge>
           </div>
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-sm text-foreground-secondary">Payment:</span>
+            <Badge variant={
+              booking.paymentStatus === PAYMENT_STATUS.PAID
+                ? 'success'
+                : booking.paymentStatus === PAYMENT_STATUS.FAILED || booking.status === BOOKING_STATUS.CANCELLED
+                  ? 'error'
+                  : 'warning'
+            }>
+              {booking.paymentStatus || PAYMENT_STATUS.PENDING}
+            </Badge>
+          </div>
           <p className="text-foreground-secondary">
             Booked on {new Date(booking.createdAt).toLocaleDateString()}
           </p>
@@ -191,6 +294,40 @@ export default function BookingDetailPage() {
 
         {/* Main Content */}
         <div className="space-y-6">
+          {paymentOrder && (
+            <Card className="p-6">
+              <h2 className="text-xl font-bold text-foreground mb-4">Complete Payment</h2>
+              <RazorpayCheckout
+                orderId={paymentOrder.orderId}
+                amount={paymentOrder.amount}
+                currency={paymentOrder.currency}
+                keyId={paymentOrder.keyId}
+                bookingNumber={paymentOrder.bookingNumber}
+                customerName="Customer"
+                customerEmail="customer@example.com"
+                customerPhone="9999999999"
+                salonName={booking.salon.name}
+                onSuccess={handlePaymentSuccess}
+                onFailure={handlePaymentFailure}
+                onCancel={() => setPaymentOrder(null)}
+              />
+            </Card>
+          )}
+
+          {booking.paymentStatus !== PAYMENT_STATUS.PAID && booking.status !== BOOKING_STATUS.CANCELLED && !paymentOrder && (
+            <Card className="p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-foreground">Payment Status</h2>
+                  <p className="text-sm text-foreground-secondary">This booking is awaiting payment.</p>
+                </div>
+                <Button variant="primary" onClick={handleRetryPayment} disabled={retryingPayment}>
+                  {retryingPayment ? 'Preparing...' : 'Pay Now'}
+                </Button>
+              </div>
+            </Card>
+          )}
+
           {/* Salon Info */}
           <Card className="p-6">
             <h2 className="text-xl font-bold text-foreground mb-4">Salon</h2>

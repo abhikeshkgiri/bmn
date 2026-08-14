@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
-import { BOOKING_STATUS } from '@/constants/booking';
+import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
 import { formatCurrency } from '@/utils/currency';
 import { Calendar, MapPin, User, Clock } from 'lucide-react';
 
@@ -52,6 +52,24 @@ const STATUS_LABELS: Record<string, string> = {
   [BOOKING_STATUS.NO_SHOW]: 'No Show',
 };
 
+const PAYMENT_STATUS_COLORS: Record<string, 'success' | 'warning' | 'error' | 'info'> = {
+  [PAYMENT_STATUS.PENDING]: 'warning',
+  [PAYMENT_STATUS.AUTHORIZED]: 'info',
+  [PAYMENT_STATUS.PAID]: 'success',
+  [PAYMENT_STATUS.FAILED]: 'error',
+  [PAYMENT_STATUS.REFUNDED]: 'info',
+  [PAYMENT_STATUS.PARTIALLY_REFUNDED]: 'warning',
+};
+
+const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  [PAYMENT_STATUS.PENDING]: 'Payment Pending',
+  [PAYMENT_STATUS.AUTHORIZED]: 'Authorized',
+  [PAYMENT_STATUS.PAID]: 'Paid',
+  [PAYMENT_STATUS.FAILED]: 'Payment Failed',
+  [PAYMENT_STATUS.REFUNDED]: 'Refunded',
+  [PAYMENT_STATUS.PARTIALLY_REFUNDED]: 'Partially Refunded',
+};
+
 export default function BookingsPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -83,8 +101,8 @@ export default function BookingsPage() {
     }
   }, []);
 
-   
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchBookings(page);
   }, [page, fetchBookings]);
 
@@ -115,12 +133,15 @@ export default function BookingsPage() {
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                       {/* Left side - Booking info */}
                       <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-3">
+                        <div className="flex items-center gap-2 mb-3 flex-wrap">
                           <h3 className="font-bold text-lg text-foreground">
                             {booking.bookingNumber}
                           </h3>
                           <Badge variant={STATUS_COLORS[booking.status]}>
                             {STATUS_LABELS[booking.status]}
+                          </Badge>
+                          <Badge variant={PAYMENT_STATUS_COLORS[booking.paymentStatus] || 'warning'}>
+                            {PAYMENT_STATUS_LABELS[booking.paymentStatus] || 'Payment Pending'}
                           </Badge>
                         </div>
 

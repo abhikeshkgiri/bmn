@@ -153,7 +153,8 @@ export default function BarberForm({
           />
           {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
           {(errors as any).userId && (
-            <p className="text-sm text-red-600 mt-1">{String((errors as any).userId.message)}</p>
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            <p className="text-sm text-red-600 mt-1">{String(((errors as any).userId as Record<string, unknown>).message)}</p>
           )}
           <p className="text-xs text-foreground-secondary mt-1">
             The user must exist and have the BARBER role

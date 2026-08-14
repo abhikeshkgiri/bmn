@@ -38,6 +38,7 @@ export type PaymentStatus = (typeof PAYMENT_STATUS)[keyof typeof PAYMENT_STATUS]
 export const PAYMENT_STATUS_ARRAY = Object.values(PAYMENT_STATUS);
 
 export const PAYMENT_METHOD = {
+  ONLINE: 'ONLINE',
   UPI: 'UPI',
   CARD: 'CARD',
   NET_BANKING: 'NET_BANKING',
