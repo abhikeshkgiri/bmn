@@ -11,15 +11,24 @@ interface CachedConnection {
   promise: Promise<typeof mongoose> | null;
 }
 
+interface GlobalWithMongoose {
+  mongoose: CachedConnection;
+}
+
 /**
  * Global is used here to maintain a cached connection across hot reloads
  * in development. This prevents connections growing exponentially
  * during development
  */
-let cached: CachedConnection = (global as any).mongoose;
+let cached: CachedConnection = (global as unknown as GlobalWithMongoose)
+  .mongoose;
 
 if (!cached) {
-  cached = (global as any).mongoose = { conn: null, promise: null };
+  (global as unknown as GlobalWithMongoose).mongoose = {
+    conn: null,
+    promise: null,
+  };
+  cached = (global as unknown as GlobalWithMongoose).mongoose;
 }
 
 /**

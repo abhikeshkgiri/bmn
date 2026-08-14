@@ -1,36 +1,156 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# BookMyNai
 
-## Getting Started
+A professional online salon appointment and home barber booking platform built with modern web technologies.
 
-First, run the development server:
+## Description
 
+BookMyNai is an online platform that enables customers to discover salons and barbers, book appointments and home barber services, manage their bookings, and access reviews and offers. The platform supports salon owners and barbers with management dashboards and provides administrators with comprehensive control tools.
+
+## Technology Stack
+
+- **Framework**: Next.js (with App Router)
+- **UI Library**: React
+- **Language**: TypeScript
+- **Styling**: Tailwind CSS
+- **Database**: MongoDB with Mongoose
+- **Validation**: Zod
+- **Forms**: React Hook Form
+- **State Management**: Zustand
+- **Icons**: Lucide React
+- **Security**: bcryptjs, jsonwebtoken
+- **Linting**: ESLint
+
+## Installation
+
+1. Clone the repository:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone <repository-url>
+cd bookmynai
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Install dependencies:
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. Set up environment variables:
+```bash
+cp .env.example .env.local
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Edit `.env.local` and fill in your values:
+```
+MONGODB_URI=your_mongodb_connection_string
+JWT_SECRET=your_jwt_secret_key
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
 
-## Learn More
+## Development
 
-To learn more about Next.js, take a look at the following resources:
+Start the development server:
+```bash
+npm run dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Available Scripts
 
-## Deploy on Vercel
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+- `npm run lint` - Run ESLint to check code quality
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Environment Variables
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Create a `.env.local` file in the project root with the following variables:
+
+```
+MONGODB_URI=        # MongoDB connection string
+JWT_SECRET=         # Secret key for JWT token generation
+NEXT_PUBLIC_APP_URL= # Public application URL
+```
+
+**Note**: Never commit `.env.local` to version control. Use `.env.example` to document required variables without sensitive values.
+
+## Project Structure
+
+```
+src/
+├── app/              # Next.js App Router pages and layouts
+│   ├── (public)/     # Public pages
+│   ├── (auth)/       # Authentication pages
+│   ├── customer/     # Customer dashboard
+│   ├── salon/        # Salon owner dashboard
+│   ├── barber/       # Barber dashboard
+│   ├── admin/        # Admin dashboard
+│   ├── api/          # API routes
+│   └── layout.tsx    # Root layout
+├── components/       # Reusable React components
+│   ├── ui/          # UI components
+│   ├── navbar/      # Navigation components
+│   ├── footer/      # Footer components
+│   ├── booking/     # Booking-related components
+│   ├── salon/       # Salon components
+│   ├── barber/      # Barber components
+│   └── maps/        # Map components
+├── lib/             # Utility functions and configurations
+│   └── db.ts        # MongoDB connection utility
+├── models/          # Mongoose data models
+├── services/        # Business logic services
+├── types/           # TypeScript type definitions
+├── validations/     # Data validation schemas
+├── hooks/           # Custom React hooks
+└── utils/           # General utility functions
+```
+
+## Current Status
+
+**Initial project setup completed.**
+
+This is the foundation phase. The following features will be implemented in subsequent stages:
+
+- Customer authentication and user management
+- Salon discovery and management
+- Barber discovery and management
+- Service discovery and management
+- Appointment booking system
+- Home barber booking system
+- Payment processing
+- Review and rating system
+- Offers and promotions
+- Membership programs
+- Notifications system
+- Mobile applications
+
+## Code Quality Standards
+
+- **TypeScript**: Strict mode enabled - avoid `any` type
+- **No hardcoded secrets**: All sensitive data uses environment variables
+- **Small components**: Keep components focused and reusable
+- **DRY principle**: Avoid code duplication
+- **Server Components**: Use Next.js Server Components by default
+- **Client Components**: Use sparingly when client-side interactivity is required
+- **Separation of concerns**: Keep business logic, UI, database, validation, and API logic separate
+- **Meaningful names**: Use clear, descriptive naming for variables and functions
+- **Next.js conventions**: Follow App Router conventions and best practices
+
+## Development Notes
+
+- The project uses MongoDB for data persistence
+- Mongoose provides schema validation and database abstraction
+- Environment variables are required to run the application
+- The development server includes hot module reloading
+- ESLint is configured for code quality checks
+
+## Future Deployment
+
+Production deployment instructions will be added when deployment features are implemented.
+
+## License
+
+[Add your license information here]
+
+## Support
+
+[Add support contact information here]
