@@ -16,6 +16,7 @@ import type { ServiceCategory, BarberSpecialization, SalonFacility } from '@/con
 // Re-export model types
 export type { IUser, ISalon, IBarber, IService, IBooking, IPayment };
 export type { IAddress, IOpeningHours, ILocation, IPortfolioItem };
+export type { UserRole };
 
 // API Response types
 export interface APIResponse<T> {
@@ -204,4 +205,46 @@ export interface PaymentFilters {
   customer?: string;
   status?: PaymentStatus;
   method?: PaymentMethod;
+}
+
+// Authentication Types
+
+export interface SessionPayload {
+  userId: string;
+  phone: string;
+  role: UserRole;
+  iat?: number;
+  exp?: number;
+}
+
+export interface AuthUser {
+  _id: string;
+  name?: string;
+  phone: string;
+  email?: string;
+  avatar?: string;
+  role: UserRole;
+  isActive: boolean;
+  isVerified: boolean;
+}
+
+export interface AuthResponse {
+  success: boolean;
+  user?: AuthUser;
+  message?: string;
+  error?: string;
+}
+
+export interface SendOtpResponse {
+  success: boolean;
+  message: string;
+  // In development only, may include otp for testing
+  devOtp?: string;
+}
+
+export interface VerifyOtpResponse {
+  success: boolean;
+  user?: AuthUser;
+  message?: string;
+  error?: string;
 }

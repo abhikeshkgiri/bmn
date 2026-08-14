@@ -1,0 +1,121 @@
+/**
+ * PATCH /api/salons/[id]/verify
+ * Verify or unverify a salon
+ * Only ADMIN/SUPER_ADMIN can verify
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/auth';
+import { verifySalon, unverifySalon } from '@/services/salon.service';
+import { z } from 'zod';
+import { ZodError } from 'zod';
+
+const VerifySchema = z.object({
+  isVerified: z.boolean(),
+});
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const currentUser = await requireAuth();
+    const { id } = await params;
+
+    // Validate ID format
+    if (!id || id.length !== 24) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'Invalid salon ID',
+          },
+        },
+        { status: 400 }
+      );
+    }
+
+    const body = await request.json();
+    const validatedData = VerifySchema.parse(body);
+
+    const salon = validatedData.isVerified
+      ? await verifySalon(id, currentUser)
+      : await unverifySalon(id, currentUser);
+
+    return NextResponse.json(
+      {
+        success: true,
+        data: salon,
+        message: `Salon ${validatedData.isVerified ? 'verified' : 'unverified'} successfully`,
+      },
+      { status: 200 }
+    );
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'isVerified must be a boolean',
+            details: error.issues,
+          },
+        },
+        { status: 400 }
+      );
+    }
+
+    if (error instanceof Error) {
+      const message = error.message;
+
+      if (message.includes('SALON_NOT_FOUND')) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'SALON_NOT_FOUND',
+              message: 'Salon not found',
+            },
+          },
+          { status: 404 }
+        );
+      }
+
+      if (message.includes('SALON_VERIFICATION_DENIED')) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'SALON_VERIFICATION_DENIED',
+              message: 'Only admins can verify salons',
+            },
+          },
+          { status: 403 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'ERROR',
+            message: message || 'Failed to update salon verification',
+          },
+        },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'An unexpected error occurred',
+        },
+      },
+      { status: 500 }
+    );
+  }
+}

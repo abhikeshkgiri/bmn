@@ -1,0 +1,84 @@
+/**
+ * POST /api/auth/send-otp
+ * Request OTP for phone number
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { SendOtpSchema } from '@/validations/auth.schema';
+import { requestOtp } from '@/services/auth.service';
+import { ZodError } from 'zod';
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+
+    // Validate request
+    const validatedData = SendOtpSchema.parse(body);
+
+    // Request OTP
+    const { otp, success } = await requestOtp(validatedData.phone);
+
+    if (!success) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: 'Too many OTP requests. Please try again later.',
+        },
+        { status: 429 }
+      );
+    }
+
+    // Return success response
+    const response: Record<string, unknown> = {
+      success: true,
+      message: 'OTP sent successfully. Check your SMS for the code.',
+    };
+
+    // In development, include OTP for testing
+    if (otp) {
+      response.devOtp = otp;
+    }
+
+    return NextResponse.json(response);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid input',
+          details: error.issues,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (error instanceof Error) {
+      // Check for specific auth errors
+      if (error.message.includes('OTP_PROVIDER_NOT_CONFIGURED')) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'OTP provider is not configured',
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message || 'Failed to send OTP',
+        },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'An unexpected error occurred',
+      },
+      { status: 500 }
+    );
+  }
+}
