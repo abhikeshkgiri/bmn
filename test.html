@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BookMyNai.com | Book Your Barber Online</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+
+*{
+margin:0;
+padding:0;
+box-sizing:border-box;
+font-family:'Poppins',sans-serif;
+}
+
+body{
+background:#fff;
+color:#111;
+}
+
+.container{
+width:90%;
+max-width:1250px;
+margin:auto;
+}
+
+header{
+position:fixed;
+width:100%;
+background:#fff;
+box-shadow:0 5px 20px rgba(0,0,0,.06);
+z-index:999;
+}
+
+nav{
+display:flex;
+justify-content:space-between;
+align-items:center;
+height:80px;
+}
+
+.logo{
+font-size:32px;
+font-weight:800;
+}
+
+.logo span{
+color:#ff2b67;
+}
+
+nav ul{
+display:flex;
+list-style:none;
+gap:40px;
+}
+
+nav a{
+text-decoration:none;
+color:#222;
+font-weight:500;
+}
+
+.btn{
+padding:15px 30px;
+background:#ff2b67;
+color:#fff;
+border-radius:50px;
+text-decoration:none;
+font-weight:600;
+display:inline-block;
+transition:.3s;
+}
+
+.btn:hover{
+background:#111;
+}
+
+.hero{
+
+padding-top:140px;
+padding-bottom:80px;
+background:
+linear-gradient(135deg,#fff,#fff8fa);
+}
+
+.hero-content{
+
+display:grid;
+grid-template-columns:1fr 1fr;
+align-items:center;
+gap:60px;
+
+}
+
+.hero h1{
+
+font-size:64px;
+line-height:75px;
+font-weight:800;
+margin-bottom:25px;
+
+}
+
+.hero h1 span{
+
+color:#ff2b67;
+
+}
+
+.hero p{
+
+font-size:20px;
+color:#666;
+margin-bottom:40px;
+line-height:34px;
+
+}
+
+.hero-buttons{
+
+display:flex;
+gap:20px;
+
+}
+
+.secondary{
+
+background:#111;
+
+}
+
+.hero img{
+
+width:100%;
+border-radius:25px;
+
+}
+
+.section{
+
+padding:100px 0;
+
+}
+
+.title{
+
+text-align:center;
+margin-bottom:60px;
+
+}
+
+.title h2{
+
+font-size:46px;
+margin-bottom:15px;
+
+}
+
+.title p{
+
+color:#666;
+
+}
+
+.cards{
+
+display:grid;
+grid-template-columns:repeat(3,1fr);
+gap:30px;
+
+}
+
+.card{
+
+padding:40px;
+border-radius:20px;
+background:#fff;
+box-shadow:0 10px 30px rgba(0,0,0,.08);
+transition:.3s;
+
+}
+
+.card:hover{
+
+transform:translateY(-10px);
+
+}
+
+.icon{
+
+font-size:50px;
+margin-bottom:20px;
+
+}
+
+.card h3{
+
+margin-bottom:15px;
+
+}
+
+.steps{
+
+display:grid;
+grid-template-columns:repeat(4,1fr);
+gap:30px;
+
+}
+
+.step{
+
+text-align:center;
+
+}
+
+.number{
+
+height:70px;
+width:70px;
+border-radius:50%;
+background:#ff2b67;
+color:white;
+display:flex;
+align-items:center;
+justify-content:center;
+font-size:30px;
+font-weight:700;
+margin:auto;
+margin-bottom:20px;
+
+}
+
+.app{
+
+background:#111;
+color:white;
+
+}
+
+.app-grid{
+
+display:grid;
+grid-template-columns:1fr 1fr;
+align-items:center;
+gap:60px;
+
+}
+
+.app h2{
+
+font-size:50px;
+margin-bottom:20px;
+
+}
+
+footer{
+
+padding:40px;
+text-align:center;
+background:#000;
+color:#999;
+
+}
+
+@media(max-width:900px){
+
+.hero-content,
+.cards,
+.steps,
+.app-grid{
+
+grid-template-columns:1fr;
+
+}
+
+.hero h1{
+
+font-size:44px;
+line-height:55px;
+
+}
+
+nav ul{
+
+display:none;
+
+}
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<header>
+
+<div class="container">
+
+<nav>
+
+<div class="logo">
+Book<span>My</span>Nai
+</div>
+
+<ul>
+
+<li><a href="#">Home</a></li>
+<li><a href="#">Services</a></li>
+<li><a href="#">Partners</a></li>
+<li><a href="#">Download App</a></li>
+<li><a href="#">Contact</a></li>
+
+</ul>
+
+<a href="#" class="btn">Book Now</a>
+
+</nav>
+
+</div>
+
+</header>
+
+<section class="hero">
+
+<div class="container">
+
+<div class="hero-content">
+
+<div>
+
+<h1>
+Book Your
+<span>Favorite Barber</span>
+in Seconds.
+</h1>
+
+<p>
+
+Discover trusted barbers and salons near you. Compare prices, check ratings, select your time slot and skip the waiting queue.
+
+</p>
+
+<div class="hero-buttons">
+
+<a href="#" class="btn">
+Book Appointment
+</a>
+
+<a href="#" class="btn secondary">
+Become Partner
+</a>
+
+</div>
+
+</div>
+
+<div>
+
+<img src="logo.png">
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<section class="section">
+
+<div class="container">
+
+<div class="title">
+
+<h2>Why BookMyNai?</h2>
+
+<p>The smarter way to book your haircut.</p>
+
+</div>
+
+<div class="cards">
+
+<div class="card">
+
+<div class="icon">📅</div>
+
+<h3>Easy Booking</h3>
+
+<p>Book appointments within seconds without calling the salon.</p>
+
+</div>
+
+<div class="card">
+
+<div class="icon">⭐</div>
+
+<h3>Verified Reviews</h3>
+
+<p>Choose the best barber based on genuine customer ratings.</p>
+
+</div>
+
+<div class="card">
+
+<div class="icon">⏰</div>
+
+<h3>No Waiting</h3>
+
+<p>Arrive at your selected time and avoid long queues.</p>
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<section class="section">
+
+<div class="container">
+
+<div class="title">
+
+<h2>How It Works</h2>
+
+</div>
+
+<div class="steps">
+
+<div class="step">
+
+<div class="number">1</div>
+
+<h3>Choose Salon</h3>
+
+</div>
+
+<div class="step">
+
+<div class="number">2</div>
+
+<h3>Select Barber</h3>
+
+</div>
+
+<div class="step">
+
+<div class="number">3</div>
+
+<h3>Pick Time</h3>
+
+</div>
+
+<div class="step">
+
+<div class="number">4</div>
+
+<h3>Enjoy Your Style</h3>
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<section class="section app">
+
+<div class="container">
+
+<div class="app-grid">
+
+<div>
+
+<h2>Download BookMyNai App</h2>
+
+<p>
+
+Book appointments anytime, receive reminders, earn rewards and discover the best salons around you.
+
+</p>
+
+<br>
+
+<a href="#" class="btn">
+
+Google Play
+
+</a>
+
+</div>
+
+<div>
+
+<img src="mobile-app.png" style="width:100%;">
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<footer>
+
+© 2026 BookMyNai.com • Your Salon. Your Time. Your Style.
+
+</footer>
+
+</body>
+</html>
