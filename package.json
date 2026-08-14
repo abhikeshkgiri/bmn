@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:db": "ts-node scripts/test-db.ts",
+    "seed": "ts-node scripts/seed.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.8.0",
@@ -29,6 +31,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
     "tailwindcss": "^4",
+    "ts-node": "^10.9.2",
     "typescript": "^5"
   }
 }
