@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
 import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
+import { USER_ROLES } from '@/constants/roles';
 import { formatCurrency } from '@/utils/currency';
 import { Calendar, MapPin, User, Clock, ArrowRight, Plus } from 'lucide-react';
 
@@ -70,6 +72,7 @@ const PAYMENT_STATUS_LABELS: Record<string, string> = {
 };
 
 export default function CustomerDashboard() {
+  const router = useRouter();
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [upcomingBooking, setUpcomingBooking] = useState<Booking | null>(null);
   const [recentBookings, setRecentBookings] = useState<Booking[]>([]);
@@ -150,9 +153,32 @@ export default function CustomerDashboard() {
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchCustomerData();
-  }, [fetchCustomerData]);
+    const checkRoleAndRedirect = async () => {
+      try {
+        const meResponse = await fetch('/api/auth/me');
+        if (meResponse.ok) {
+          const me = await meResponse.json();
+          const role = me?.user?.role;
+
+          if (role === USER_ROLES.SALON_OWNER || role === USER_ROLES.ADMIN || role === USER_ROLES.SUPER_ADMIN) {
+            router.replace('/dashboard/salon');
+            return;
+          }
+
+          if (role === USER_ROLES.BARBER) {
+            router.replace('/dashboard/barber');
+            return;
+          }
+        }
+      } catch {
+        // Ignore and continue to regular customer dashboard flow.
+      }
+
+      fetchCustomerData();
+    };
+
+    checkRoleAndRedirect();
+  }, [fetchCustomerData, router]);
 
   if (loading) {
     return (

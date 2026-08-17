@@ -69,7 +69,43 @@ export default function BarberBookingsPage() {
   };
 
   useEffect(() => {
-    loadBookings(1);
+    let isCancelled = false;
+
+    const fetchInitialBookings = async () => {
+      try {
+        setLoading(true);
+        const params = new URLSearchParams({ page: '1', limit: '10' });
+        if (statusFilter !== 'all') params.set('status', statusFilter);
+
+        const response = await fetch(`/api/barber/bookings?${params.toString()}`);
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          throw new Error(result.error?.message || 'Failed to load bookings');
+        }
+
+        if (!isCancelled) {
+          setBookings(result.data || []);
+          setPage(result.pagination?.page || 1);
+          setTotalPages(result.pagination?.totalPages || 1);
+          setError(null);
+        }
+      } catch (err) {
+        if (!isCancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load bookings');
+        }
+      } finally {
+        if (!isCancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void fetchInitialBookings();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [statusFilter]);
 
   const filteredBookings = bookings.filter((booking) => {
