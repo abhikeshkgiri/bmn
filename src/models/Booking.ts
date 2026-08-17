@@ -132,6 +132,14 @@ const BookingSchema = new Schema<IBooking>(
   { timestamps: true }
 );
 
+// Indexes for optimal query performance
+// For fetching bookings by salon + date + status (capacity checks)
+BookingSchema.index({ salon: 1, appointmentDate: 1, status: 1 });
+// For fetching bookings by barber + date + status (conflict checks)
+BookingSchema.index({ barber: 1, appointmentDate: 1, status: 1 });
+// For fetching customer bookings
+BookingSchema.index({ customer: 1, appointmentDate: 1 });
+
 // Prevent OverwriteModelError
 const Booking = mongoose.models.Booking || mongoose.model<IBooking>('Booking', BookingSchema);
 
