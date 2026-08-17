@@ -1,4 +1,6 @@
-import React from 'react';
+'use client';
+
+import React, { useId } from 'react';
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -21,7 +23,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
     type = 'text',
     ...props
   }, ref) => {
-    const inputId = id || `input-${Math.random().toString(36).substr(2, 9)}`;
+    const generatedId = useId();
+    const inputId = id || generatedId;
 
     return (
       <div className={fullWidth ? 'w-full' : ''}>
@@ -83,7 +86,8 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     rows = 4,
     ...props
   }, ref) => {
-    const textareaId = id || `textarea-${Math.random().toString(36).substr(2, 9)}`;
+    const generatedId = useId();
+    const textareaId = id || generatedId;
 
     return (
       <div className={fullWidth ? 'w-full' : ''}>
@@ -145,7 +149,8 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
     options,
     ...props
   }, ref) => {
-    const selectId = id || `select-${Math.random().toString(36).substr(2, 9)}`;
+    const generatedId = useId();
+    const selectId = id || generatedId;
 
     return (
       <div className={fullWidth ? 'w-full' : ''}>
@@ -205,7 +210,8 @@ export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
     id,
     ...props
   }, ref) => {
-    const checkboxId = id || `checkbox-${Math.random().toString(36).substr(2, 9)}`;
+    const generatedId = useId();
+    const checkboxId = id || generatedId;
 
     return (
       <div className="flex items-start">
@@ -253,7 +259,8 @@ export const Radio = React.forwardRef<HTMLInputElement, RadioProps>(
     id,
     ...props
   }, ref) => {
-    const radioId = id || `radio-${Math.random().toString(36).substr(2, 9)}`;
+    const generatedId = useId();
+    const radioId = id || generatedId;
 
     return (
       <div className="flex items-start">

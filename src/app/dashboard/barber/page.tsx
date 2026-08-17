@@ -9,6 +9,7 @@ import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
 import { BOOKING_STATUS } from '@/constants/booking';
 import { USER_ROLES } from '@/constants/roles';
+import NotificationBell from '@/components/notifications/NotificationBell';
 import { CalendarClock, Clock3, UserCheck, ArrowRight } from 'lucide-react';
 
 interface DashboardData {
@@ -121,7 +122,8 @@ export default function BarberDashboardRoutePage() {
             <h1 className="text-3xl font-bold text-foreground">{data.barber?.name || 'Barber profile'}</h1>
             <p className="text-foreground-secondary">{data.barber?.salon?.name || 'Salon'}</p>
           </div>
-          <div className="flex gap-3 flex-wrap">
+          <div className="flex gap-3 flex-wrap items-center">
+            <NotificationBell />
             <Link href="/dashboard/barber/bookings"><Button variant="primary">My bookings</Button></Link>
             <Link href="/dashboard/barber/profile"><Button variant="secondary">My profile</Button></Link>
           </div>

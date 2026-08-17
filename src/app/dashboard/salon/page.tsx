@@ -7,10 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
-import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
+import { BOOKING_STATUS } from '@/constants/booking';
 import { USER_ROLES } from '@/constants/roles';
 import { formatCurrency } from '@/utils/currency';
-import { Calendar, Clock3, DollarSign, Users, CheckCircle2, ArrowRight } from 'lucide-react';
+import NotificationBell from '@/components/notifications/NotificationBell';
+import { Calendar, Clock3, DollarSign, CheckCircle2 } from 'lucide-react';
 
 interface DashboardData {
   salon: { _id: string; name: string } | null;
@@ -133,7 +134,8 @@ export default function SalonDashboardRoutePage() {
             <h1 className="text-3xl font-bold text-foreground">{data.salon?.name || 'Salon Overview'}</h1>
             <p className="text-foreground-secondary">{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
           </div>
-          <div className="flex gap-3 flex-wrap">
+          <div className="flex gap-3 flex-wrap items-center">
+            <NotificationBell />
             <Link href="/dashboard/salon/bookings"><Button variant="primary">Bookings</Button></Link>
             <Link href="/dashboard/salon/services"><Button variant="secondary">Services</Button></Link>
             <Link href="/dashboard/salon/barbers"><Button variant="secondary">Barbers</Button></Link>

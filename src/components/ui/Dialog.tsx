@@ -57,17 +57,25 @@ const useDialog = () => {
 };
 
 const DialogTrigger = React.forwardRef<HTMLButtonElement, DialogTriggerProps>(
-  ({ children, ...props }, ref) => {
+  ({ children, className, onClick, ...props }, ref) => {
     const { onOpenChange } = useDialog();
 
+    const handleClick = (event: React.MouseEvent<HTMLSpanElement>) => {
+      onClick?.(event as unknown as React.MouseEvent<HTMLButtonElement>);
+      if (!event.defaultPrevented) {
+        onOpenChange(true);
+      }
+    };
+
     return (
-      <button
-        ref={ref}
-        onClick={() => onOpenChange(true)}
+      <span
+        ref={ref as React.Ref<HTMLSpanElement>}
+        onClick={handleClick}
+        className={className}
         {...props}
       >
         {children}
-      </button>
+      </span>
     );
   }
 );

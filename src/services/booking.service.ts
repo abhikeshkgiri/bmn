@@ -27,6 +27,12 @@ import {
   generateBookingNumberFormat,
   isValidTimeRange,
 } from '@/utils/booking';
+import {
+  notifyBookingCancelled,
+  notifyBookingCreated,
+  notifyBookingConfirmed,
+  notifyBookingRescheduled,
+} from '@/services/notification.service';
 
 /**
  * Error codes for booking operations
@@ -478,7 +484,10 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
     customerNotes: payload.customerNotes || null,
   });
 
-  return booking.populate(['customer', 'salon', 'barber', 'service']);
+  const populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
+  await notifyBookingCreated(populatedBooking._id.toString());
+
+  return populatedBooking;
 }
 
 /**
@@ -665,7 +674,10 @@ export async function cancelBooking(
   booking.cancellationReason = reason || 'Customer cancelled';
   await booking.save();
 
-  return booking.populate(['customer', 'salon', 'barber', 'service']);
+  const populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
+  await notifyBookingCancelled(populatedBooking._id.toString());
+
+  return populatedBooking;
 }
 
 /**
@@ -727,7 +739,17 @@ export async function updateBookingStatus(
   booking.status = newStatus;
   await booking.save();
 
-  return booking.populate(['customer', 'salon', 'barber', 'service']);
+  const populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
+
+  if (newStatus === BOOKING_STATUS.CONFIRMED) {
+    await notifyBookingConfirmed(populatedBooking._id.toString());
+  }
+
+  if (newStatus === BOOKING_STATUS.CANCELLED) {
+    await notifyBookingCancelled(populatedBooking._id.toString());
+  }
+
+  return populatedBooking;
 }
 
 /**

@@ -10,6 +10,10 @@ import { connectDB } from '@/lib/db';
 import { getRazorpayClient, verifyPaymentSignature } from '@/lib/razorpay';
 import type { AuthUser } from '@/types';
 import { PAYMENT_STATUS, PAYMENT_METHOD, PAYMENT_PROVIDER, BOOKING_STATUS } from '@/constants/booking';
+import {
+  notifyPaymentFailed,
+  notifyPaymentSuccess,
+} from '@/services/notification.service';
 
 /**
  * Payment error codes and messages
@@ -250,6 +254,8 @@ export async function verifyRazorpayPayment(
     }
   );
 
+  await notifyPaymentSuccess(bookingId);
+
   return payment;
 }
 
@@ -280,6 +286,7 @@ export async function recordPaymentFailure(
       };
     }
     await payment.save();
+    await notifyPaymentFailed(bookingId, errorDescription || 'Payment failed');
   }
 }
 

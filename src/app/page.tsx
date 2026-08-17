@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import Logo from '@/components/navbar/Logo';
 import Button from '@/components/ui/Button';
 import { Input, Textarea, Select, Checkbox, Radio } from '@/components/ui/Input';
@@ -33,7 +34,12 @@ export default function UIShowcase() {
           <NavbarMenuItem href="#">Services</NavbarMenuItem>
         </NavbarMenu>
         <NavbarActions>
-          <Button variant="primary" size="sm">Sign In</Button>
+          <Link href="/login">
+            <Button variant="outline" size="sm">Test Login</Button>
+          </Link>
+          <Link href="/dashboard">
+            <Button variant="primary" size="sm">Dashboard</Button>
+          </Link>
         </NavbarActions>
       </Navbar>
 

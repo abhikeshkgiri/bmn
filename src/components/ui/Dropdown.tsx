@@ -28,12 +28,12 @@ const Dropdown: React.FC<DropdownProps> = ({ trigger, children }) => {
 
   return (
     <div ref={containerRef} className="relative inline-block">
-      <button
+      <div
         onClick={() => setOpen(!open)}
-        className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-pink focus-visible:outline-offset-2"
+        className="inline-block focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-pink focus-visible:outline-offset-2 cursor-pointer"
       >
         {trigger}
-      </button>
+      </div>
       {open && (
         <div className="absolute right-0 mt-1 w-48 bg-white border border-border rounded-lg shadow-bookmynai-md z-50">
           {children}

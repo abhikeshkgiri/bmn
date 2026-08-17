@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/Loading';
 import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
 import { USER_ROLES } from '@/constants/roles';
 import { formatCurrency } from '@/utils/currency';
+import NotificationBell from '@/components/notifications/NotificationBell';
 import { Calendar, MapPin, User, Clock, ArrowRight, Plus } from 'lucide-react';
 
 interface Customer {
@@ -198,9 +199,12 @@ export default function CustomerDashboard() {
               <h1 className="text-4xl font-bold mb-2">Welcome, {customer?.name}</h1>
               <p className="text-white/80">Manage your appointments and bookings</p>
             </div>
-            <Link href="/bookings">
-              <Button variant="secondary">View All Bookings</Button>
-            </Link>
+            <div className="flex items-center gap-3">
+              <NotificationBell />
+              <Link href="/bookings">
+                <Button variant="secondary">View All Bookings</Button>
+              </Link>
+            </div>
           </div>
         </div>
 
