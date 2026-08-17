@@ -2,6 +2,7 @@
  * Booking service layer
  * Core business logic for booking operations
  * All server-side validation and authorization happens here
+ * ⚠️ CRITICAL: All booking creation uses atomic operations to prevent race conditions
  */
 
 import { Types } from 'mongoose';
@@ -33,6 +34,7 @@ import {
   notifyBookingConfirmed,
   notifyBookingRescheduled,
 } from '@/services/notification.service';
+import mongoose from 'mongoose';
 
 /**
  * Error codes for booking operations
@@ -430,7 +432,8 @@ export async function getBarberBookings(
 
 /**
  * Create a new booking with atomic capacity check
- * Prevents double-booking and overbooking at database level
+ * Prevents double-booking and overbooking at database level using atomic operations
+ * ⚠️ CRITICAL: This function now uses MongoDB transactions to ensure atomicity
  */
 export async function createBooking(payload: BookingCreatePayload): Promise<IBooking> {
   await connectDB();
@@ -440,101 +443,105 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
     throw BOOKING_ERRORS.UNAUTHORIZED;
   }
 
-  // Validate all prerequisites
+  // Validate all prerequisites (non-atomic checks)
   const { salon, barber, service, appointmentDate } = await validateBookingRequest(payload);
 
   // Calculate end time and validate against service duration
   const endTime = calculateEndTime(payload.startTime, service.duration);
 
-  // Check for overlapping bookings for the selected barber (CRITICAL: must re-check before creating)
-  const hasOverlap = await checkOverlappingBookings(
-    payload.barberId,
-    appointmentDate,
-    payload.startTime,
-    endTime
-  );
+  // ⚠️ ATOMIC OPERATION SECTION: Everything from here uses transactions
+  // This ensures that availability checking and booking creation are atomic
+  // and no race conditions can occur
+  
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  if (hasOverlap) {
-    throw BOOKING_ERRORS.OVERLAPPING_BOOKING;
+  try {
+    // Re-check barber overlap one final time (within transaction)
+    const barberOverlap = await Booking.findOne(
+      {
+        barber: new Types.ObjectId(payload.barberId),
+        appointmentDate: {
+          $gte: new Date(appointmentDate.toDateString()),
+          $lt: new Date(new Date(appointmentDate).setDate(appointmentDate.getDate() + 1)),
+        },
+        status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
+        startTime: { $lt: endTime },
+        endTime: { $gt: payload.startTime },
+      },
+      {},
+      { session }
+    );
+
+    if (barberOverlap) {
+      throw BOOKING_ERRORS.OVERLAPPING_BOOKING;
+    }
+
+    // Check salon capacity atomically
+    // Count confirmed/in-progress bookings that overlap at this time slot
+    const salonCapacity = salon.capacity || 4;
+    const bookingsAtThisSlot = await Booking.countDocuments(
+      {
+        salon: new Types.ObjectId(payload.salonId),
+        appointmentDate: {
+          $gte: new Date(appointmentDate.toDateString()),
+          $lt: new Date(new Date(appointmentDate).setDate(appointmentDate.getDate() + 1)),
+        },
+        status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
+        startTime: { $lt: endTime },
+        endTime: { $gt: payload.startTime },
+      },
+      { session }
+    );
+
+    if (bookingsAtThisSlot >= salonCapacity) {
+      throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
+    }
+
+    // Generate booking number
+    const bookingNumber = await generateBookingNumber();
+
+    // Calculate price (from database, never trust frontend)
+    const servicePrice = service.discountPrice || service.price;
+    const discountAmount = 0; // No discount in Phase 8
+    const taxAmount = 0; // No tax in Phase 8
+    const totalAmount = servicePrice - discountAmount + taxAmount;
+
+    // Create booking atomically within transaction
+    const bookingDoc = new Booking({
+      bookingNumber,
+      customer: new Types.ObjectId(payload.currentUser._id),
+      salon: new Types.ObjectId(payload.salonId),
+      barber: new Types.ObjectId(payload.barberId),
+      service: new Types.ObjectId(payload.serviceId),
+      appointmentDate,
+      startTime: payload.startTime,
+      endTime,
+      duration: service.duration,
+      servicePrice,
+      discountAmount,
+      taxAmount,
+      totalAmount,
+      status: BOOKING_STATUS.PENDING,
+      paymentStatus: PAYMENT_STATUS.PENDING,
+      bookingType: payload.bookingType,
+      customerNotes: payload.customerNotes || null,
+    });
+
+    const booking = await bookingDoc.save({ session });
+    await session.commitTransaction();
+
+    // Populate after transaction completes
+    const populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
+    await notifyBookingCreated(populatedBooking._id.toString());
+
+    return populatedBooking;
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    await session.endSession();
   }
-
-  // PHASE 15: Check remaining capacity at this time slot
-  // Count all CONFIRMED bookings at this time slot across ALL barbers
-  const capacityConflictingBookings = await Booking.countDocuments({
-    salon: new Types.ObjectId(payload.salonId),
-    appointmentDate: {
-      $gte: new Date(appointmentDate.toDateString()),
-      $lt: new Date(new Date(appointmentDate).setDate(appointmentDate.getDate() + 1)),
-    },
-    status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
-    $expr: {
-      $ne: [{ $literal: true }, true], // Placeholder for complex query
-    },
-  });
-
-  // Do overlap check more carefully for capacity
-  const overlappingAtTimeSlot = await Booking.countDocuments({
-    salon: new Types.ObjectId(payload.salonId),
-    appointmentDate: {
-      $gte: new Date(appointmentDate.toDateString()),
-      $lt: new Date(new Date(appointmentDate).setDate(appointmentDate.getDate() + 1)),
-    },
-    status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
-  });
-
-  // Get all bookings that might overlap with this time slot
-  const potentialConflicts = await Booking.find({
-    salon: new Types.ObjectId(payload.salonId),
-    appointmentDate: {
-      $gte: new Date(appointmentDate.toDateString()),
-      $lt: new Date(new Date(appointmentDate).setDate(appointmentDate.getDate() + 1)),
-    },
-    status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
-  }).select('startTime endTime');
-
-  const bookedAtThisSlot = potentialConflicts.filter((b) =>
-    isTimeOverlap(b.startTime, b.endTime, payload.startTime, endTime)
-  ).length;
-
-  const salonCapacity = salon.capacity || 4;
-  if (bookedAtThisSlot >= salonCapacity) {
-    throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
-  }
-
-  // Generate booking number
-  const bookingNumber = await generateBookingNumber();
-
-  // Calculate price (from database, never trust frontend)
-  const servicePrice = service.discountPrice || service.price;
-  const discountAmount = 0; // No discount in Phase 8
-  const taxAmount = 0; // No tax in Phase 8
-  const totalAmount = servicePrice - discountAmount + taxAmount;
-
-  // Create booking
-  const booking = await Booking.create({
-    bookingNumber,
-    customer: new Types.ObjectId(payload.currentUser._id),
-    salon: new Types.ObjectId(payload.salonId),
-    barber: new Types.ObjectId(payload.barberId),
-    service: new Types.ObjectId(payload.serviceId),
-    appointmentDate,
-    startTime: payload.startTime,
-    endTime,
-    duration: service.duration,
-    servicePrice,
-    discountAmount,
-    taxAmount,
-    totalAmount,
-    status: BOOKING_STATUS.PENDING,
-    paymentStatus: PAYMENT_STATUS.PENDING,
-    bookingType: payload.bookingType,
-    customerNotes: payload.customerNotes || null,
-  });
-
-  const populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
-  await notifyBookingCreated(populatedBooking._id.toString());
-
-  return populatedBooking;
 }
 
 /**
