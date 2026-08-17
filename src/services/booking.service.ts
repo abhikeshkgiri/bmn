@@ -20,7 +20,6 @@ import {
   BOOKING_MIN_DAYS_AHEAD,
 } from '@/constants/booking-config';
 import {
-  generateTimeSlots,
   isDateBookable,
   isAppointmentInPast,
   calculateEndTime,
@@ -32,7 +31,6 @@ import {
   notifyBookingCancelled,
   notifyBookingCreated,
   notifyBookingConfirmed,
-  notifyBookingRescheduled,
 } from '@/services/notification.service';
 import mongoose from 'mongoose';
 
@@ -184,33 +182,6 @@ async function validateBookingRequest(payload: BookingCreatePayload): Promise<{
     service,
     appointmentDate,
   };
-}
-
-/**
- * Check for overlapping bookings
- */
-async function checkOverlappingBookings(
-  barberId: string,
-  appointmentDate: Date,
-  startTime: string,
-  endTime: string
-): Promise<boolean> {
-  const existingBooking = await Booking.findOne({
-    barber: new Types.ObjectId(barberId),
-    appointmentDate: {
-      $gte: new Date(appointmentDate.toDateString()),
-      $lt: new Date(new Date(appointmentDate).setDate(appointmentDate.getDate() + 1)),
-    },
-    startTime: { $exists: true },
-    endTime: { $exists: true },
-    status: { $in: [BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
-  });
-
-  if (!existingBooking) {
-    return false;
-  }
-
-  return isTimeOverlap(existingBooking.startTime, existingBooking.endTime, startTime, endTime);
 }
 
 export async function getSalonDashboardStats(salonId: string, currentUser: AuthUser): Promise<{
@@ -444,7 +415,7 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
   }
 
   // Validate all prerequisites (non-atomic checks)
-  const { salon, barber, service, appointmentDate } = await validateBookingRequest(payload);
+  const { salon, service, appointmentDate } = await validateBookingRequest(payload);
 
   // Calculate end time and validate against service duration
   const endTime = calculateEndTime(payload.startTime, service.duration);

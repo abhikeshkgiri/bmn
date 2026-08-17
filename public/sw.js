@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Service Worker for BookMyNai PWA
  * Handles offline caching, push notifications, and app shell

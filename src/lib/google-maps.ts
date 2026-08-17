@@ -3,6 +3,18 @@
  * Loads the Google Maps API script only once and manages script state
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// Google Maps API types are complex and not fully covered by DefinitelyTyped
+// This is properly isolated and only used within map-related components
+
+interface GoogleMapsAPI {
+  Map: any;
+  Marker: any;
+  InfoWindow: any;
+  LatLngBounds: any;
+  SymbolPath: any;
+}
+
 let mapsScriptPromise: Promise<void> | null = null;
 
 export async function loadGoogleMaps(): Promise<void> {
@@ -66,7 +78,7 @@ export async function loadGoogleMaps(): Promise<void> {
 /**
  * Get Google Maps instance (assumes script is already loaded)
  */
-export function getGoogleMaps(): any {
+export function getGoogleMaps(): GoogleMapsAPI | null {
   if (typeof window !== 'undefined' && (window as any).google?.maps) {
     return (window as any).google.maps;
   }

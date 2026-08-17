@@ -6,6 +6,11 @@
  * or: npm run test:db
  */
 
+import path from 'node:path';
+import dotenv from 'dotenv';
+
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+
 import { connectDB } from '@/lib/db';
 import User from '@/models/User';
 import Salon from '@/models/Salon';

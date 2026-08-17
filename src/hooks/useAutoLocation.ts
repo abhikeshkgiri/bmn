@@ -3,7 +3,7 @@
  * Optionally requests permission automatically
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useCurrentLocation } from './useCurrentLocation';
 
 interface UseAutoLocationReturn {
@@ -16,14 +16,14 @@ interface UseAutoLocationReturn {
 
 export function useAutoLocation(autoRequest: boolean = false): UseAutoLocationReturn {
   const location = useCurrentLocation();
-  const [hasRequested, setHasRequested] = useState(false);
+  const hasRequestedRef = useRef(false);
 
   useEffect(() => {
-    if (autoRequest && !hasRequested && !location.latitude && !location.error) {
-      setHasRequested(true);
+    if (autoRequest && !hasRequestedRef.current && !location.latitude && !location.error) {
+      hasRequestedRef.current = true;
       location.requestLocation();
     }
-  }, [autoRequest, hasRequested, location.latitude, location.error, location.requestLocation]);
+  }, [autoRequest, location]);
 
   return {
     latitude: location.latitude,

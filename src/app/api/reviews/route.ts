@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { createReview, REVIEW_ERRORS } from '@/services/review.service';
+import { createReview } from '@/services/review.service';
 
 export async function POST(request: NextRequest) {
   try {

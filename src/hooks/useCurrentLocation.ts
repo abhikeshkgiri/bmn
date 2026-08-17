@@ -2,7 +2,7 @@
  * Hook to get current browser location using Geolocation API
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 interface LocationState {
   latitude: number | null;

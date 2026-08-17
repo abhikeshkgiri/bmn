@@ -116,7 +116,6 @@ function getOtpProvider(): OtpProvider {
 
   // Default behavior based on environment
   if (nodeEnv === 'production') {
-    // In production, require explicit configuration
     throw new Error(
       '🔴 CRITICAL: OTP_PROVIDER not configured for production!\n' +
       'Set OTP_PROVIDER environment variable to one of: twilio, mock\n' +
@@ -126,8 +125,11 @@ function getOtpProvider(): OtpProvider {
     );
   }
 
-  // Development mode
-  return new DevelopmentOtpProvider();
+  if (process.env.AUTH_DEV_MODE === 'true') {
+    return new DevelopmentOtpProvider();
+  }
+
+  return new MockOtpProvider();
 }
 
 // Singleton instance

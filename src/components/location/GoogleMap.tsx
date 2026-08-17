@@ -7,7 +7,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { loadGoogleMaps, getGoogleMaps } from '@/lib/google-maps';
-import Button from '@/components/ui/Button';
 import { MapPin } from 'lucide-react';
 
 export interface MapSalon {
@@ -32,6 +31,10 @@ interface GoogleMapProps {
   height?: string;
 }
 
+interface MapMarker {
+  setMap: (map: unknown) => void;
+}
+
 export default function GoogleMap({
   salons,
   center,
@@ -39,8 +42,8 @@ export default function GoogleMap({
   height = '400px',
 }: GoogleMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
-  const [map, setMap] = useState<any>(null);
-  const [markers, setMarkers] = useState<any[]>([]);
+  const markersRef = useRef<MapMarker[]>([]);
+  const mapInstanceRef = useRef<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,7 +55,7 @@ export default function GoogleMap({
         setError(null);
 
         await loadGoogleMaps();
-        const gmaps = getGoogleMaps() as any;
+        const gmaps = getGoogleMaps();
 
         if (!gmaps || !mapRef.current) {
           throw new Error('Google Maps not available');
@@ -62,7 +65,8 @@ export default function GoogleMap({
           ? { lat: center.latitude, lng: center.longitude }
           : { lat: 28.7041, lng: 77.1025 }; // Default to Delhi
 
-        const mapInstance = new gmaps.Map(mapRef.current, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mapInstance = new (gmaps as any).Map(mapRef.current, {
           zoom: 13,
           center: defaultCenter,
           mapTypeControl: true,
@@ -70,12 +74,12 @@ export default function GoogleMap({
           streetViewControl: false,
         });
 
-        setMap(mapInstance);
+        mapInstanceRef.current = mapInstance;
+        setLoading(false);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to load Google Maps';
         setError(message);
         console.error('Map initialization error:', err);
-      } finally {
         setLoading(false);
       }
     };
@@ -83,31 +87,35 @@ export default function GoogleMap({
     initializeMap();
   }, [center]);
 
-  // Add markers
+  // Update markers when salons change
   useEffect(() => {
-    if (!map || !salons.length) {
-      // Clear markers
-      markers.forEach((marker) => marker.setMap(null));
-      setMarkers([]);
+    if (!mapInstanceRef.current || !salons.length) {
+      // Clear markers when no salons
+      markersRef.current.forEach((marker) => marker.setMap(null));
+      markersRef.current = [];
       return;
     }
 
-    const gmaps = getGoogleMaps() as any;
+    const gmaps = getGoogleMaps();
     if (!gmaps) return;
 
     // Clear old markers
-    markers.forEach((marker) => marker.setMap(null));
-    const newMarkers: any[] = [];
+    markersRef.current.forEach((marker) => marker.setMap(null));
+    markersRef.current = [];
+
+    const newMarkers: MapMarker[] = [];
 
     salons.forEach((salon) => {
       const [lng, lat] = salon.location.coordinates;
 
-      const marker = new gmaps.Marker({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const marker = new (gmaps as any).Marker({
         position: { lat, lng },
-        map,
+        map: mapInstanceRef.current,
         title: salon.name,
         icon: {
-          path: gmaps.SymbolPath.CIRCLE,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          path: (gmaps as any).SymbolPath.CIRCLE,
           scale: 8,
           fillColor: '#FF2D7A',
           fillOpacity: 0.8,
@@ -138,14 +146,14 @@ export default function GoogleMap({
         </div>
       `;
 
-      const infoWindow = new gmaps.InfoWindow({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const infoWindow = new (gmaps as any).InfoWindow({
         content: infoWindowContent,
       });
 
       marker.addListener('click', () => {
-        // Close other info windows
-        // In a real implementation, you'd track all info windows
-        infoWindow.open(map, marker);
+        // Open info window
+        infoWindow.open(mapInstanceRef.current, marker);
 
         // Call callback
         if (onSalonClick) {
@@ -156,11 +164,12 @@ export default function GoogleMap({
       newMarkers.push(marker);
     });
 
-    setMarkers(newMarkers);
+    markersRef.current = newMarkers;
 
     // Fit bounds if there are salons
-    if (newMarkers.length > 0) {
-      const bounds = new gmaps.LatLngBounds();
+    if (newMarkers.length > 0 && mapInstanceRef.current) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const bounds = new (gmaps as any).LatLngBounds();
 
       if (center) {
         bounds.extend({ lat: center.latitude, lng: center.longitude });
@@ -171,13 +180,10 @@ export default function GoogleMap({
         bounds.extend({ lat, lng });
       });
 
-      map.fitBounds(bounds, { padding: 50 });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (mapInstanceRef.current as any).fitBounds(bounds, { padding: 50 });
     }
-
-    return () => {
-      newMarkers.forEach((marker) => marker.setMap(null));
-    };
-  }, [map, salons, onSalonClick]);
+  }, [salons, onSalonClick, center]);
 
   if (error) {
     return (
@@ -199,6 +205,5 @@ export default function GoogleMap({
       </div>
     );
   }
-
   return <div ref={mapRef} style={{ width: '100%', height }} className="rounded-lg border border-border" />;
 }

@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { validateCoupon, COUPON_ERRORS } from '@/services/coupon.service';
+import { validateCoupon } from '@/services/coupon.service';
 
 export async function POST(request: NextRequest) {
   try {

@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { updateReview, deleteReview, getReview, REVIEW_ERRORS } from '@/services/review.service';
+import { updateReview, deleteReview } from '@/services/review.service';
 
 export async function PATCH(
   request: NextRequest,

@@ -1,3 +1,27 @@
+/**
+ * Load environment variables for any Node process that touches the database directly.
+ * Next.js also loads .env.local automatically, but scripts and direct connections need it too.
+ * We avoid a static `dotenv/config` import here because Next.js bundles this module for the browser
+ * and resolves the package incorrectly in the app runtime.
+ */
+import path from 'node:path';
+
+if (typeof window === 'undefined') {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('dotenv').config({
+      path: path.resolve(process.cwd(), '.env.local'),
+    });
+  } catch {
+    // Ignore dotenv loading failures in environments where it is unavailable.
+  }
+}
+
+/**
+ * Configure DNS for MongoDB SRV resolution (must be first)
+ */
+import "./dns-config";
+
 import mongoose from "mongoose";
 
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -34,6 +58,9 @@ if (!cached) {
 /**
  * Connect to MongoDB using Mongoose
  * Reuses connection during development to avoid connection pooling issues
+ * 
+ * DNS configuration for MongoDB SRV resolution is handled in dns-config.ts
+ * which is imported before this module is loaded.
  */
 export async function connectDB(): Promise<typeof mongoose> {
   if (cached.conn) {
@@ -41,7 +68,13 @@ export async function connectDB(): Promise<typeof mongoose> {
   }
 
   if (!cached.promise) {
-    cached.promise = mongoose.connect(MONGODB_URI!);
+    cached.promise = mongoose.connect(MONGODB_URI!, {
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 10000,
+      connectTimeoutMS: 10000,
+      retryWrites: true,
+      w: "majority",
+    });
   }
 
   try {

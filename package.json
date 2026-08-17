@@ -3,16 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node ./scripts/next-runner.js dev",
+    "build": "node ./scripts/next-runner.js build",
+    "start": "node ./scripts/next-runner.js start",
     "lint": "eslint",
-    "test:db": "ts-node scripts/test-db.ts",
-    "seed": "ts-node scripts/seed.ts"
+    "test:db": "node -r ts-node/register/transpile-only -r tsconfig-paths/register -e \"require('./scripts/test-db.ts')\"",
+    "seed": "node -r ts-node/register/transpile-only -r tsconfig-paths/register -e \"require('./scripts/seed.ts')\"",
+    "seed:demo": "node -r ts-node/register/transpile-only -r tsconfig-paths/register -e \"require('./scripts/seed-demo.ts')\"",
+    "seed:demo:reset": "node -r ts-node/register/transpile-only -r tsconfig-paths/register -e \"require('./scripts/seed-demo.ts')\" --reset"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.8.0",
     "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
     "jose": "^6.2.8",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.31.0",

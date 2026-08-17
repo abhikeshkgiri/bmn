@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
@@ -10,7 +9,7 @@ import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Loading';
 import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
 import { formatCurrency } from '@/utils/currency';
-import { Search, Calendar, Filter } from 'lucide-react';
+import { Search } from 'lucide-react';
 
 interface BookingRecord {
   _id: string;
@@ -38,7 +37,6 @@ const statusColors: Record<string, 'success' | 'warning' | 'error' | 'info'> = {
 };
 
 export default function SalonBookingsPage() {
-  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [bookings, setBookings] = useState<BookingRecord[]>([]);

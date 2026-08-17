@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
@@ -66,7 +66,15 @@ export default function SalonDetailPage() {
   const [salon, setSalon] = useState<Salon | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [distance, setDistance] = useState<number | null>(null);
+
+  // Calculate distance as derived state using useMemo
+  const distance = useMemo(() => {
+    if (salon && userLat !== null && userLng !== null && salon.location?.coordinates) {
+      const [salonLng, salonLat] = salon.location.coordinates;
+      return calculateDistance(userLat, userLng, salonLat, salonLng);
+    }
+    return null;
+  }, [salon, userLat, userLng]);
 
   useEffect(() => {
     const fetchSalon = async () => {
@@ -99,15 +107,6 @@ export default function SalonDetailPage() {
       fetchSalon();
     }
   }, [slug]);
-
-  // Calculate distance when salon or user location changes
-  useEffect(() => {
-    if (salon && userLat !== null && userLng !== null && salon.location?.coordinates) {
-      const [salonLng, salonLat] = salon.location.coordinates;
-      const dist = calculateDistance(userLat, userLng, salonLat, salonLng);
-      setDistance(dist);
-    }
-  }, [salon, userLat, userLng]);
 
   if (loading) {
     return (

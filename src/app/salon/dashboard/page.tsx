@@ -7,10 +7,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
-import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
+import { BOOKING_STATUS } from '@/constants/booking';
 import { USER_ROLES } from '@/constants/roles';
 import { formatCurrency } from '@/utils/currency';
-import { Calendar, Clock3, Users, DollarSign, ArrowRight, CheckCircle2, XCircle, Plus } from 'lucide-react';
+import { Calendar, Clock3, Users, DollarSign, ArrowRight, CheckCircle2, Plus } from 'lucide-react';
 
 interface DashboardData {
   salon: { _id: string; name: string; isActive?: boolean; status?: string; owner?: string } | null;

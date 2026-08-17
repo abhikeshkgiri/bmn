@@ -13,6 +13,7 @@ import { sendOtp } from '@/lib/otp-provider';
 import { rateLimiter } from '@/lib/rate-limit';
 import { OTP_CONFIG, AUTH_ERRORS, AUTH_DEV_MODE, DEV_OTP } from '@/constants/auth';
 import { USER_ROLES } from '@/constants/roles';
+
 import type { AuthUser } from '@/types';
 
 /**
@@ -151,7 +152,7 @@ export async function verifyOtpAndGetUser(
     if (!user) {
       // Create new user with CUSTOMER role
       user = await User.create({
-        name: '', // Will be filled in profile completion
+        name: 'New User',
         phone,
         role: USER_ROLES.CUSTOMER,
         isActive: true,
