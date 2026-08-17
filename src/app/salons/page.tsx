@@ -7,21 +7,16 @@ import { Input } from '@/components/ui/Input';
 import { Card } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Loading';
-import { MapPin, Star } from 'lucide-react';
+import LocationSearch from '@/components/location/LocationSearch';
+import GoogleMap, { type MapSalon } from '@/components/location/GoogleMap';
+import { MapPin, Star, Map } from 'lucide-react';
+import { formatDistance } from '@/utils/distance';
 
-interface Salon {
-  _id: string;
-  name: string;
-  slug: string;
+interface Salon extends MapSalon {
   description?: string;
   logo?: string;
-  address: {
-    city: string;
-    area?: string;
-  };
-  rating: number;
-  reviewCount: number;
   isVerified: boolean;
+  reviewCount: number;
 }
 
 interface PaginationData {
@@ -43,28 +38,49 @@ export default function SalonsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [city, setCity] = useState('');
   const [sortBy, setSortBy] = useState('newest');
+  const [showMap, setShowMap] = useState(false);
+  const [locationCenter, setLocationCenter] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [useLocationSearch, setUseLocationSearch] = useState(false);
 
   // Fetch salons
-  const fetchSalons = async (page: number = 1) => {
+  const fetchSalons = async (page: number = 1, lat?: number, lng?: number, radius?: number) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
+      let url = '/api/salons';
+      let params: Record<string, string> = {
         page: String(page),
         limit: '20',
-      });
+      };
 
-      if (searchTerm) params.append('search', searchTerm);
-      if (city) params.append('city', city);
-      if (sortBy) params.append('sortBy', sortBy);
+      if (lat !== undefined && lng !== undefined && radius !== undefined) {
+        // Use nearby endpoint
+        url = '/api/salons/nearby';
+        params = {
+          lat: String(lat),
+          lng: String(lng),
+          radius: String(radius),
+          page: String(page),
+          limit: '20',
+        };
+        setLocationCenter({ latitude: lat, longitude: lng });
+        setUseLocationSearch(true);
+      } else {
+        // Use regular search
+        setUseLocationSearch(false);
+        if (searchTerm) params.search = searchTerm;
+        if (city) params.city = city;
+        if (sortBy) params.sortBy = sortBy;
+      }
 
-      const response = await fetch(`/api/salons?${params}`, {
+      const queryString = new URLSearchParams(params).toString();
+      const response = await fetch(`${url}?${queryString}`, {
         method: 'GET',
       });
 
       const data = await response.json();
 
       if (data.success) {
-        setSalons(data.data);
+        setSalons(data.data.salons || data.data);
         setPagination(data.pagination);
       }
     } catch (error) {
@@ -87,6 +103,10 @@ export default function SalonsPage() {
     fetchSalons(1);
   };
 
+  const handleLocationSearch = (latitude: number, longitude: number, radius: number) => {
+    fetchSalons(1, latitude, longitude, radius);
+  };
+
   return (
     <div className="min-h-screen bg-white">
       {/* Header */}
@@ -99,44 +119,84 @@ export default function SalonsPage() {
         </div>
       </div>
 
-      {/* Search and Filters */}
+      {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          {/* Search */}
-          <div className="md:col-span-2">
-            <form onSubmit={handleSearch} className="relative">
+        {/* Location Search Section */}
+        <div className="mb-8">
+          <LocationSearch onSearch={handleLocationSearch} loading={loading} />
+        </div>
+
+        {/* Location-based Discovery Results */}
+        {useLocationSearch && locationCenter && (
+          <div className="mb-8">
+            {/* Map View */}
+            {showMap && (
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-2xl font-bold text-foreground">Nearby Salons Map</h2>
+                  <Button variant="ghost" onClick={() => setShowMap(false)}>
+                    Hide Map
+                  </Button>
+                </div>
+                <GoogleMap
+                  salons={salons as MapSalon[]}
+                  center={locationCenter}
+                  height="500px"
+                />
+              </div>
+            )}
+
+            {!showMap && salons.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={() => setShowMap(true)}
+                className="mb-6"
+              >
+                <Map size={18} className="mr-2" />
+                View on Map
+              </Button>
+            )}
+          </div>
+        )}
+        {/* Traditional Search and Filters */}
+        {!useLocationSearch && (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            {/* Search */}
+            <div className="md:col-span-2">
+              <form onSubmit={handleSearch} className="relative">
+                <Input
+                  type="text"
+                  placeholder="Search salons..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </form>
+            </div>
+
+            {/* City Filter */}
+            <div>
               <Input
                 type="text"
-                placeholder="Search salons..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="City (e.g., Delhi)"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
               />
-            </form>
-          </div>
+            </div>
 
-          {/* City Filter */}
-          <div>
-            <Input
-              type="text"
-              placeholder="City (e.g., Delhi)"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-            />
+            {/* Sort */}
+            <div>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="w-full px-4 py-2 border border-border rounded-lg bg-white text-foreground hover:border-brand-pink transition-colors"
+              >
+                <option value="newest">Newest</option>
+                <option value="rating">Highest Rated</option>
+                <option value="name">Name (A-Z)</option>
+              </select>
+            </div>
           </div>
-
-          {/* Sort */}
-          <div>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="w-full px-4 py-2 border border-border rounded-lg bg-white text-foreground hover:border-brand-pink transition-colors"
-            >
-              <option value="newest">Newest</option>
-              <option value="rating">Highest Rated</option>
-              <option value="name">Name (A-Z)</option>
-            </select>
-          </div>
-        </div>
+        )}
 
         {/* Results */}
         {loading ? (
@@ -197,12 +257,19 @@ export default function SalonsPage() {
                       )}
 
                       {/* Location */}
-                      <div className="flex items-center gap-2 text-sm text-foreground-secondary">
-                        <MapPin size={16} />
-                        <span>
-                          {salon.address.area && `${salon.address.area}, `}
-                          {salon.address.city}
-                        </span>
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2 text-foreground-secondary">
+                          <MapPin size={16} />
+                          <span>
+                            {salon.address.area && `${salon.address.area}, `}
+                            {salon.address.city}
+                          </span>
+                        </div>
+                        {useLocationSearch && salon.distance && (
+                          <div className="font-medium text-brand-pink text-right">
+                            {formatDistance(salon.distance)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </Card>
@@ -215,7 +282,18 @@ export default function SalonsPage() {
               <div className="flex justify-center items-center gap-2">
                 <Button
                   variant="ghost"
-                  onClick={() => fetchSalons(Math.max(1, pagination.page - 1))}
+                  onClick={() => {
+                    if (useLocationSearch && locationCenter) {
+                      fetchSalons(
+                        Math.max(1, pagination.page - 1),
+                        locationCenter.latitude,
+                        locationCenter.longitude,
+                        5 // Default radius
+                      );
+                    } else {
+                      fetchSalons(Math.max(1, pagination.page - 1));
+                    }
+                  }}
                   disabled={pagination.page === 1}
                 >
                   Previous
@@ -225,7 +303,13 @@ export default function SalonsPage() {
                   {Array.from({ length: pagination.totalPages }, (_, i) => i + 1).map((page) => (
                     <button
                       key={page}
-                      onClick={() => fetchSalons(page)}
+                      onClick={() => {
+                        if (useLocationSearch && locationCenter) {
+                          fetchSalons(page, locationCenter.latitude, locationCenter.longitude, 5);
+                        } else {
+                          fetchSalons(page);
+                        }
+                      }}
                       className={`px-3 py-2 rounded-lg transition-colors ${
                         pagination.page === page
                           ? 'bg-brand-pink text-white'
@@ -239,7 +323,18 @@ export default function SalonsPage() {
 
                 <Button
                   variant="ghost"
-                  onClick={() => fetchSalons(Math.min(pagination.totalPages, pagination.page + 1))}
+                  onClick={() => {
+                    if (useLocationSearch && locationCenter) {
+                      fetchSalons(
+                        Math.min(pagination.totalPages, pagination.page + 1),
+                        locationCenter.latitude,
+                        locationCenter.longitude,
+                        5
+                      );
+                    } else {
+                      fetchSalons(Math.min(pagination.totalPages, pagination.page + 1));
+                    }
+                  }}
                   disabled={pagination.page === pagination.totalPages}
                 >
                   Next

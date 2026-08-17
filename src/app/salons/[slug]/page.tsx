@@ -7,7 +7,9 @@ import { Card } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
-import { MapPin, Phone, Mail, Globe, Star, Check } from 'lucide-react';
+import { useCurrentLocation } from '@/hooks/useCurrentLocation';
+import { formatDistance, calculateDistance } from '@/utils/distance';
+import { MapPin, Phone, Mail, Globe, Star, Check, Navigation } from 'lucide-react';
 
 interface Salon {
   _id: string;
@@ -16,6 +18,10 @@ interface Salon {
   description?: string;
   logo?: string;
   coverImage?: string;
+  location?: {
+    type: 'Point';
+    coordinates: [number, number];
+  };
   address: {
     addressLine1: string;
     addressLine2?: string;
@@ -55,10 +61,12 @@ const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satu
 export default function SalonDetailPage() {
   const params = useParams();
   const slug = params.slug as string;
+  const { latitude: userLat, longitude: userLng } = useCurrentLocation();
 
   const [salon, setSalon] = useState<Salon | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [distance, setDistance] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchSalon = async () => {
@@ -91,6 +99,15 @@ export default function SalonDetailPage() {
       fetchSalon();
     }
   }, [slug]);
+
+  // Calculate distance when salon or user location changes
+  useEffect(() => {
+    if (salon && userLat !== null && userLng !== null && salon.location?.coordinates) {
+      const [salonLng, salonLat] = salon.location.coordinates;
+      const dist = calculateDistance(userLat, userLng, salonLat, salonLng);
+      setDistance(dist);
+    }
+  }, [salon, userLat, userLng]);
 
   if (loading) {
     return (
@@ -193,7 +210,7 @@ export default function SalonDetailPage() {
               <div className="space-y-3">
                 <div className="flex gap-3">
                   <MapPin size={20} className="text-brand-pink flex-shrink-0 mt-1" />
-                  <div>
+                  <div className="flex-1">
                     <p className="font-semibold text-foreground">{salon.address.addressLine1}</p>
                     {salon.address.addressLine2 && (
                       <p className="text-foreground-secondary">{salon.address.addressLine2}</p>
@@ -207,8 +224,31 @@ export default function SalonDetailPage() {
                     {salon.address.landmark && (
                       <p className="text-sm text-foreground-secondary">Landmark: {salon.address.landmark}</p>
                     )}
+                    {distance !== null && (
+                      <p className="text-sm text-brand-pink font-medium mt-2">
+                        📍 {formatDistance(distance)} away
+                      </p>
+                    )}
                   </div>
                 </div>
+                {salon.location?.coordinates && (
+                  <div className="flex gap-2 mt-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const [lng, lat] = salon.location!.coordinates;
+                        const googleMapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(
+                          salon.address.addressLine1 + ' ' + salon.address.city
+                        )}/@${lat},${lng},15z`;
+                        window.open(googleMapsUrl, '_blank');
+                      }}
+                    >
+                      <Navigation size={16} className="mr-2" />
+                      Get Directions
+                    </Button>
+                  </div>
+                )}
               </div>
             </Card>
 

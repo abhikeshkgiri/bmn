@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
+import NearbySalons from '@/components/location/NearbySalons';
 import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
 import { USER_ROLES } from '@/constants/roles';
 import { formatCurrency } from '@/utils/currency';
@@ -343,6 +344,10 @@ export default function CustomerDashboard() {
                 </Link>
               ))}
             </div>
+
+            {/* Nearby Salons */}
+            <h2 className="text-2xl font-bold mb-6 mt-8">Nearby Salons</h2>
+            <NearbySalons />
           </div>
 
           {/* Quick Actions */}
