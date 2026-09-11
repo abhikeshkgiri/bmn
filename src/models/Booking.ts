@@ -23,14 +23,43 @@ interface IBooking extends Document {
   discountAmount?: number; // in paise
   taxAmount?: number; // in paise
   totalAmount: number; // in paise
+  couponCode?: string;
+  loyaltyPointsRedeemed?: number;
+  membershipDiscountAmount?: number;
   status: BookingStatus;
   paymentStatus: PaymentStatus;
   holdExpiresAt?: Date;
   bookingType: BookingType;
+  customerAddress?: Types.ObjectId;
+  serviceLocation?: { latitude: number; longitude: number };
+  homeServiceRadius?: number;
+  homeServiceStatus?: HomeServiceStatus;
+  requestedAt?: Date;
+  acceptedAt?: Date;
+  onTheWayAt?: Date;
+  arrivedAt?: Date;
+  serviceStartedAt?: Date;
+  completedAt?: Date;
+  startOtpHash?: string;
+  startOtpExpiresAt?: Date;
+  startOtpAttempts?: number;
+  latestBarberLocation?: { latitude: number; longitude: number; updatedAt: Date };
   customerNotes?: string;
   cancellationReason?: string;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export enum HomeServiceStatus {
+  REQUESTED = 'REQUESTED',
+  ACCEPTED = 'ACCEPTED',
+  REJECTED = 'REJECTED',
+  ON_THE_WAY = 'ON_THE_WAY',
+  ARRIVED = 'ARRIVED',
+  SERVICE_STARTED = 'SERVICE_STARTED',
+  SERVICE_COMPLETED = 'SERVICE_COMPLETED',
+  CANCELLED = 'CANCELLED',
+  EXPIRED = 'EXPIRED',
 }
 
 const BookingSchema = new Schema<IBooking>(
@@ -104,6 +133,9 @@ const BookingSchema = new Schema<IBooking>(
       required: true,
       min: 0,
     },
+    couponCode: { type: String, default: null, trim: true },
+    loyaltyPointsRedeemed: { type: Number, default: 0, min: 0 },
+    membershipDiscountAmount: { type: Number, default: 0, min: 0 },
     status: {
       type: String,
       enum: Object.values(BOOKING_STATUS),
@@ -126,6 +158,27 @@ const BookingSchema = new Schema<IBooking>(
       enum: Object.values(BOOKING_TYPE),
       required: true,
     },
+    customerAddress: { type: Schema.Types.ObjectId, ref: 'CustomerAddress', default: null, index: true },
+    serviceLocation: {
+      latitude: { type: Number, min: -90, max: 90 },
+      longitude: { type: Number, min: -180, max: 180 },
+    },
+    homeServiceRadius: { type: Number, min: 0 },
+    homeServiceStatus: { type: String, enum: Object.values(HomeServiceStatus), default: null, index: true },
+    requestedAt: { type: Date, default: null, index: true },
+    acceptedAt: { type: Date, default: null },
+    onTheWayAt: { type: Date, default: null },
+    arrivedAt: { type: Date, default: null },
+    serviceStartedAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
+    startOtpHash: { type: String, default: null, select: false },
+    startOtpExpiresAt: { type: Date, default: null, select: false },
+    startOtpAttempts: { type: Number, default: 0, min: 0, select: false },
+    latestBarberLocation: {
+      latitude: { type: Number, min: -90, max: 90 },
+      longitude: { type: Number, min: -180, max: 180 },
+      updatedAt: { type: Date },
+    },
     customerNotes: {
       type: String,
       default: null,
@@ -146,6 +199,8 @@ BookingSchema.index({ barber: 1, appointmentDate: 1, status: 1 });
 // For fetching customer bookings
 BookingSchema.index({ customer: 1, appointmentDate: 1 });
 BookingSchema.index({ salon: 1, appointmentDate: 1, holdExpiresAt: 1 });
+BookingSchema.index({ bookingType: 1, homeServiceStatus: 1, appointmentDate: 1 });
+BookingSchema.index({ barber: 1, bookingType: 1, homeServiceStatus: 1, appointmentDate: 1 });
 
 // Prevent OverwriteModelError
 const Booking = mongoose.models.Booking || mongoose.model<IBooking>('Booking', BookingSchema);

@@ -45,6 +45,8 @@ export const BookingCreateSchema = z
     startTime: timeFormatSchema,
     bookingType: z.enum(BOOKING_TYPE_ARRAY as [string, ...string[]]),
     customerNotes: z.string().max(500, 'Notes must be 500 characters or less').optional(),
+    couponCode: z.string().trim().min(3).max(50).optional(),
+    loyaltyPoints: z.number().int().min(0).optional(),
   })
   .strict();
 

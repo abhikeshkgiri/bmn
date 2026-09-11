@@ -382,6 +382,36 @@ export default function CustomerDashboard() {
                   <p className="text-xs text-foreground-secondary">Manage account</p>
                 </Card>
               </Link>
+              <Link href="/loyalty">
+                <Card className="p-4 hover:shadow-lg transition-shadow cursor-pointer text-center">
+                  <h4 className="font-semibold text-foreground">Loyalty and membership</h4>
+                  <p className="text-xs text-foreground-secondary">Points and plans</p>
+                </Card>
+              </Link>
+              <Link href="/memberships">
+                <Card className="p-4 hover:shadow-lg transition-shadow cursor-pointer text-center">
+                  <h4 className="font-semibold text-foreground">Membership plans</h4>
+                  <p className="text-xs text-foreground-secondary">Unlock member benefits</p>
+                </Card>
+              </Link>
+              <Link href="/favorites">
+                <Card className="p-4 hover:shadow-lg transition-shadow cursor-pointer text-center">
+                  <h4 className="font-semibold text-foreground">Favorites</h4>
+                  <p className="text-xs text-foreground-secondary">Saved salons and barbers</p>
+                </Card>
+              </Link>
+              <Link href="/addresses">
+                <Card className="p-4 hover:shadow-lg transition-shadow cursor-pointer text-center">
+                  <h4 className="font-semibold text-foreground">Saved addresses</h4>
+                  <p className="text-xs text-foreground-secondary">Manage your addresses</p>
+                </Card>
+              </Link>
+              <Link href="/support">
+                <Card className="p-4 hover:shadow-lg transition-shadow cursor-pointer text-center">
+                  <h4 className="font-semibold text-foreground">Help and support</h4>
+                  <p className="text-xs text-foreground-secondary">Contact support</p>
+                </Card>
+              </Link>
             </div>
           </div>
         </div>

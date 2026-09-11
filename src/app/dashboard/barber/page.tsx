@@ -125,6 +125,7 @@ export default function BarberDashboardRoutePage() {
           <div className="flex gap-3 flex-wrap items-center">
             <NotificationBell />
             <Link href="/dashboard/barber/bookings"><Button variant="primary">My bookings</Button></Link>
+            <Link href="/dashboard/barber/home-service"><Button variant="secondary">Home-service requests</Button></Link>
             <Link href="/dashboard/barber/profile"><Button variant="secondary">My profile</Button></Link>
           </div>
         </div>

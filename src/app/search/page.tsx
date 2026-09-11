@@ -91,7 +91,7 @@ function SearchPageContent() {
           <NavbarMenuItem href="/salons">Salons</NavbarMenuItem>
           <NavbarMenuItem href="/services">Services</NavbarMenuItem>
           <NavbarMenuItem href="/offers">Offers</NavbarMenuItem>
-          <NavbarMenuItem href="/business">For Business</NavbarMenuItem>
+          <NavbarMenuItem href="/salon">For Business</NavbarMenuItem>
         </NavbarMenu>
         <NavbarActions>
           <Link href="/login">
@@ -242,30 +242,30 @@ function SearchPageContent() {
         </FooterSection>
         <FooterSection>
           <h4 className="font-semibold text-foreground">For Businesses</h4>
-          <FooterLink href="/business/signup">Register Salon</FooterLink>
-          <FooterLink href="/business/signup">Register Barber</FooterLink>
-          <FooterLink href="/business/faq">Business FAQ</FooterLink>
-          <FooterLink href="/business/support">Business Support</FooterLink>
+          <FooterLink href="/salon">Register Salon</FooterLink>
+          <FooterLink href="/salon">Register Barber</FooterLink>
+          <FooterLink href="/support">Business FAQ</FooterLink>
+          <FooterLink href="/support">Business Support</FooterLink>
         </FooterSection>
         <FooterSection>
           <h4 className="font-semibold text-foreground">Company</h4>
-          <FooterLink href="/about">About Us</FooterLink>
-          <FooterLink href="/blog">Blog</FooterLink>
-          <FooterLink href="/careers">Careers</FooterLink>
-          <FooterLink href="/press">Press</FooterLink>
+          <FooterLink href="/support">About Us</FooterLink>
+          <FooterLink href="/support">Blog</FooterLink>
+          <FooterLink href="/support">Careers</FooterLink>
+          <FooterLink href="/support">Press</FooterLink>
         </FooterSection>
         <FooterSection>
           <h4 className="font-semibold text-foreground">Support</h4>
-          <FooterLink href="/help">Help Center</FooterLink>
-          <FooterLink href="/contact">Contact Us</FooterLink>
+          <FooterLink href="/support">Help Center</FooterLink>
+          <FooterLink href="/support">Contact Us</FooterLink>
           <FooterLink href="/feedback">Send Feedback</FooterLink>
           <FooterLink href="/report">Report Issue</FooterLink>
         </FooterSection>
         <FooterSection>
           <h4 className="font-semibold text-foreground">Legal</h4>
-          <FooterLink href="/privacy">Privacy Policy</FooterLink>
-          <FooterLink href="/terms">Terms of Service</FooterLink>
-          <FooterLink href="/cookies">Cookie Policy</FooterLink>
+          <FooterLink href="/support">Privacy Policy</FooterLink>
+          <FooterLink href="/support">Terms of Service</FooterLink>
+          <FooterLink href="/support">Cookie Policy</FooterLink>
           <FooterLink href="/disclaimer">Disclaimer</FooterLink>
         </FooterSection>
       </Footer>

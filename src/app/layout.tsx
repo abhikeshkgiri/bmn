@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "BookMyNai | Salon & Home Barber Booking",
-  description: "Online Salon Appointment & Home Barber Booking Platform",
+  title: "BMN",
+  description: "Salon appointments and home barber booking platform",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

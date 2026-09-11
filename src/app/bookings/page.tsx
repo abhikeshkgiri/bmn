@@ -308,7 +308,7 @@ export default function BookingsPage() {
         ) : (
           <Card className="p-12 text-center">
             <p className="text-foreground-secondary mb-6">No bookings found</p>
-            <Link href="/book/salons">
+            <Link href="/salons">
               <Button variant="primary">
                 Book an Appointment
               </Button>

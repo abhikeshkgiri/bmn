@@ -32,6 +32,20 @@ interface Service {
   price: number;
 }
 
+interface CheckoutPrice {
+  servicePrice: number;
+  subtotal: number;
+  membershipDiscount: number;
+  couponDiscount: number;
+  loyaltyDiscount: number;
+  discountAmount: number;
+  taxAmount: number;
+  totalAmount: number;
+  couponCode?: string;
+  loyaltyPoints: number;
+  membershipPlan?: string;
+}
+
 interface TimeSlot {
   startTime: string;
   endTime: string;
@@ -56,6 +70,10 @@ export default function BookPage() {
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
   const [customerNotes, setCustomerNotes] = useState('');
+  const [couponCode, setCouponCode] = useState('');
+  const [loyaltyPoints, setLoyaltyPoints] = useState(0);
+  const [checkoutPrice, setCheckoutPrice] = useState<CheckoutPrice | null>(null);
+  const [priceLoading, setPriceLoading] = useState(false);
 
   // Data lists
   const [services, setServices] = useState<Service[]>([]);
@@ -103,10 +121,10 @@ export default function BookPage() {
   useEffect(() => {
     const fetchSalon = async () => {
       try {
-        const response = await fetch(`/api/salons?search=${salonSlug}`);
+        const response = await fetch(`/api/salons?slug=${encodeURIComponent(salonSlug)}`);
         const result = await response.json() as {success: boolean; data?: Salon[]};
         if (result.success && result.data?.length) {
-          const foundSalon = result.data.find((s: Salon) => s.slug === salonSlug);
+          const foundSalon = result.data.find((s: Salon) => s.slug === salonSlug.toLowerCase());
           if (foundSalon) {
             setSalon(foundSalon);
             await fetchServices(foundSalon._id);
@@ -185,6 +203,21 @@ export default function BookPage() {
     setStep('review');
   };
 
+  const previewPrice = async (): Promise<CheckoutPrice | null> => {
+    if (!salon || !selectedService) return null;
+    setPriceLoading(true);
+    try {
+      const response = await fetch('/api/checkout/price', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ salonId: salon._id, serviceId: selectedService._id, couponCode: couponCode.trim() || undefined, loyaltyPoints: loyaltyPoints || undefined }),
+      });
+      const result = await response.json() as { success: boolean; data?: CheckoutPrice; error?: { message?: string } };
+      if (!result.success || !result.data) { alert(result.error?.message || 'Unable to calculate checkout price'); return null; }
+      setCheckoutPrice(result.data);
+      return result.data;
+    } finally { setPriceLoading(false); }
+  };
+
   const handleBooking = async () => {
     if (!salon || !selectedService || !selectedBarber || !selectedDate || !selectedTime) {
       alert('Please complete all steps');
@@ -193,6 +226,8 @@ export default function BookPage() {
 
     try {
       setBookingSubmitting(true);
+      const price = await previewPrice();
+      if (!price) return;
       const response = await fetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -204,6 +239,8 @@ export default function BookPage() {
           startTime: selectedTime,
           bookingType: 'SALON',
           customerNotes: customerNotes || undefined,
+          couponCode: couponCode.trim() || undefined,
+          loyaltyPoints: loyaltyPoints || undefined,
         }),
       });
 
@@ -552,9 +589,25 @@ export default function BookPage() {
                   <div>
                     <p className="text-sm text-foreground-secondary">Price</p>
                     <p className="text-2xl font-bold text-brand-pink">
-                      {formatCurrency(selectedService?.price || 0)}
+                      {formatCurrency(checkoutPrice?.totalAmount ?? selectedService?.price ?? 0)}
                     </p>
                   </div>
+                </Card>
+
+                <Card className="p-6 space-y-4">
+                  <h3 className="font-bold text-foreground">Checkout benefits</h3>
+                  <Input value={couponCode} onChange={(e) => setCouponCode(e.target.value.toUpperCase())} placeholder="Coupon code" />
+                  <Input type="number" min="0" value={loyaltyPoints || ''} onChange={(e) => setLoyaltyPoints(Math.max(0, Number(e.target.value) || 0))} placeholder="Loyalty points to redeem" />
+                  <Button variant="secondary" onClick={() => void previewPrice()} disabled={priceLoading} fullWidth>
+                    {priceLoading ? 'Calculating...' : 'Apply and calculate price'}
+                  </Button>
+                  {checkoutPrice && <div className="border-t border-border pt-3 space-y-2 text-sm">
+                    <div className="flex justify-between"><span>Subtotal</span><span>{formatCurrency(checkoutPrice.subtotal)}</span></div>
+                    <div className="flex justify-between"><span>Membership</span><span>-{formatCurrency(checkoutPrice.membershipDiscount)}</span></div>
+                    <div className="flex justify-between"><span>Coupon</span><span>-{formatCurrency(checkoutPrice.couponDiscount)}</span></div>
+                    <div className="flex justify-between"><span>Loyalty</span><span>-{formatCurrency(checkoutPrice.loyaltyDiscount)}</span></div>
+                    <div className="flex justify-between font-bold"><span>Final Amount</span><span>{formatCurrency(checkoutPrice.totalAmount)}</span></div>
+                  </div>}
                 </Card>
 
                 <div>
@@ -639,7 +692,7 @@ export default function BookPage() {
                   <div className="pt-3 border-t border-border">
                     <p className="text-foreground-secondary">Total</p>
                     <p className="text-2xl font-bold text-brand-pink">
-                      {formatCurrency(selectedService.price)}
+                      {formatCurrency(checkoutPrice?.totalAmount ?? selectedService.price)}
                     </p>
                   </div>
                 )}

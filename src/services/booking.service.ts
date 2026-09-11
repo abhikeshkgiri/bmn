@@ -10,6 +10,7 @@ import Booking, { type IBooking } from '@/models/Booking';
 import Salon, { type ISalon } from '@/models/Salon';
 import Barber, { type IBarber } from '@/models/Barber';
 import Service, { type IService } from '@/models/Service';
+import Leave from '@/models/Leave';
 import { connectDB } from '@/lib/db';
 import type { AuthUser } from '@/types';
 import { BOOKING_STATUS, PAYMENT_STATUS, BOOKING_TYPE } from '@/constants/booking';
@@ -34,6 +35,9 @@ import {
 } from '@/services/notification.service';
 import mongoose from 'mongoose';
 import { recordAuditEvent } from '@/services/audit.service';
+import { calculateCheckoutPrice, reserveCouponUsage } from '@/services/pricing.service';
+import { redeemLoyaltyPoints, awardLoyaltyPoints, refundRedeemedPoints } from '@/services/loyalty.service';
+import { releaseCouponUsage } from '@/services/pricing.service';
 
 const BOOKING_HOLD_MINUTES = 10;
 
@@ -85,6 +89,8 @@ interface BookingCreatePayload {
   startTime: string;
   bookingType: string;
   customerNotes?: string;
+  couponCode?: string;
+  loyaltyPoints?: number;
   currentUser: AuthUser;
 }
 
@@ -108,7 +114,7 @@ interface AvailabilityResponse {
  * Generate next available booking number
  * Format: BMN-YYYY-XXXXXX
  */
-async function generateBookingNumber(session?: mongoose.ClientSession): Promise<string> {
+export async function generateBookingNumber(session?: mongoose.ClientSession): Promise<string> {
   const year = new Date().getFullYear();
   const query = Booking.findOne()
     .sort({ createdAt: -1 })
@@ -437,6 +443,13 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
 
   // Validate all prerequisites (non-atomic checks)
   const { salon, service, appointmentDate } = await validateBookingRequest(payload);
+  const price = await calculateCheckoutPrice({
+    salonId: payload.salonId,
+    serviceId: payload.serviceId,
+    customerId: payload.currentUser._id,
+    couponCode: payload.couponCode,
+    loyaltyPoints: payload.loyaltyPoints,
+  });
 
   // Calculate end time and validate against service duration
   const endTime = calculateEndTime(payload.startTime, service.duration);
@@ -497,10 +510,10 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
       }
 
       const bookingNumber = await generateBookingNumber(session);
-      const servicePrice = service.discountPrice || service.price;
-      const discountAmount = 0;
-      const taxAmount = 0;
-      const totalAmount = servicePrice - discountAmount + taxAmount;
+      const servicePrice = price.servicePrice;
+      const discountAmount = price.discountAmount;
+      const taxAmount = price.taxAmount;
+      const totalAmount = price.totalAmount;
 
       const bookingDoc = new Booking({
         bookingNumber,
@@ -516,6 +529,9 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
         discountAmount,
         taxAmount,
         totalAmount,
+        couponCode: price.couponCode,
+        loyaltyPointsRedeemed: price.loyaltyPoints,
+        membershipDiscountAmount: price.membershipDiscount,
         status: BOOKING_STATUS.PENDING,
         paymentStatus: PAYMENT_STATUS.PENDING,
         holdExpiresAt: new Date(Date.now() + BOOKING_HOLD_MINUTES * 60 * 1000),
@@ -524,6 +540,12 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
       });
 
       const booking = await bookingDoc.save({ session });
+      if (price.coupon) {
+        await reserveCouponUsage(price.coupon, payload.currentUser._id, booking._id.toString(), session);
+      }
+      if (price.loyaltyPoints > 0) {
+        await redeemLoyaltyPoints(payload.currentUser._id, price.loyaltyPoints, session, booking._id.toString());
+      }
       populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
     });
 
@@ -560,8 +582,8 @@ export async function getAvailableSlots(
     throw BOOKING_ERRORS.INVALID_SALON;
   }
 
-  const barberExists = await Barber.exists({ _id: barberId });
-  if (!barberExists) {
+  const barber = await Barber.findOne({ _id: barberId, salon: salonId, isActive: true, isAvailable: true }).select('_id');
+  if (!barber) {
     throw BOOKING_ERRORS.INVALID_BARBER;
   }
 
@@ -576,13 +598,29 @@ export async function getAvailableSlots(
     throw { code: 'INVALID_DATE', message: 'Invalid date format' };
   }
 
+  const dayStart = new Date(date.toDateString());
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+  const activeLeaves = await Leave.find({
+    salon: salonId,
+    active: true,
+    startDate: { $lt: dayEnd },
+    endDate: { $gt: dayStart },
+    $or: [{ barber: null }, { barber: barberId }],
+  }).select('barber');
+  const salonClosed = activeLeaves.some((leave) => !leave.barber);
+  const barberUnavailable = activeLeaves.some((leave) => leave.barber);
+  if (salonClosed) {
+    return { date: appointmentDate, serviceDuration: service.duration, salonCapacity: salon.capacity, slots: [] };
+  }
+
   // Get all confirmed bookings for the date (all barbers, all services)
   // This counts capacity across all barbers in the salon
   const allBookings = await Booking.find({
     salon: new Types.ObjectId(salonId),
     appointmentDate: {
-      $gte: new Date(date.toDateString()),
-      $lt: new Date(new Date(date).setDate(date.getDate() + 1)),
+      $gte: dayStart,
+      $lt: dayEnd,
     },
     ...activeBookingFilter(),
   }).select('startTime endTime duration');
@@ -630,7 +668,7 @@ export async function getAvailableSlots(
 
     const bookedCount = overlappingBookings.length;
     const remainingCapacity = Math.max(0, salonCapacity - bookedCount);
-    const isAvailable = remainingCapacity > 0;
+    const isAvailable = remainingCapacity > 0 && !barberUnavailable;
 
     slots.push({
       startTime,
@@ -854,6 +892,10 @@ export async function cancelBooking(
   booking.status = BOOKING_STATUS.CANCELLED;
   booking.cancellationReason = reason || 'Customer cancelled';
   await booking.save();
+  await releaseCouponUsage(bookingId);
+  if (booking.loyaltyPointsRedeemed && booking.loyaltyPointsRedeemed > 0) {
+    await refundRedeemedPoints(bookingId, booking.customer.toString());
+  }
 
   const populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
   await notifyBookingCancelled(populatedBooking._id.toString());
@@ -935,6 +977,10 @@ export async function updateBookingStatus(
 
   if (newStatus === BOOKING_STATUS.CANCELLED) {
     await notifyBookingCancelled(populatedBooking._id.toString());
+  }
+
+  if (newStatus === BOOKING_STATUS.COMPLETED) {
+    await awardLoyaltyPoints(bookingId, booking.customer.toString(), booking.totalAmount);
   }
 
   void recordAuditEvent({

@@ -106,6 +106,7 @@ const LoyaltyTransactionSchema = new Schema<ILoyaltyTransaction>(
 LoyaltyAccountSchema.index({ customer: 1 });
 LoyaltyTransactionSchema.index({ customer: 1, createdAt: -1 });
 LoyaltyTransactionSchema.index({ account: 1, createdAt: -1 });
+LoyaltyTransactionSchema.index({ bookingId: 1, transactionType: 1 }, { unique: true, sparse: true });
 
 const LoyaltyAccount =
   mongoose.models.LoyaltyAccount || mongoose.model<ILoyaltyAccount>('LoyaltyAccount', LoyaltyAccountSchema);

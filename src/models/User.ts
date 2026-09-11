@@ -10,6 +10,7 @@ interface IUser extends Document {
   role: UserRole;
   isActive: boolean;
   isVerified: boolean;
+  notificationPreferences?: { inApp: boolean; push: boolean };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -57,6 +58,10 @@ const UserSchema = new Schema<IUser>(
     isVerified: {
       type: Boolean,
       default: false,
+    },
+    notificationPreferences: {
+      inApp: { type: Boolean, default: true },
+      push: { type: Boolean, default: true },
     },
   },
   { timestamps: true }

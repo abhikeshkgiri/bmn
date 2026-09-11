@@ -175,12 +175,18 @@ export default function SalonsPage() {
 
             {/* City Filter */}
             <div>
-              <Input
-                type="text"
-                placeholder="City (e.g., Delhi)"
+              <select
+                aria-label="Filter salons by city"
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
-              />
+                className="w-full px-4 py-2 border border-border rounded-lg bg-white text-foreground hover:border-brand-pink transition-colors"
+              >
+                <option value="">All cities</option>
+                <option value="Delhi">Delhi</option>
+                <option value="Mumbai">Mumbai</option>
+                <option value="Bengaluru">Bengaluru</option>
+                <option value="Kolkata">Kolkata</option>
+              </select>
             </div>
 
             {/* Sort */}

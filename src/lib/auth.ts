@@ -56,6 +56,7 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
       role: user.role,
       isActive: user.isActive,
       isVerified: user.isVerified,
+      notificationPreferences: user.notificationPreferences,
     };
   } catch {
     // Token invalid, expired, or verification failed

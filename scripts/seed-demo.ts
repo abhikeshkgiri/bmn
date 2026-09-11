@@ -38,6 +38,7 @@ type DemoSalonBlueprint = {
   name: string;
   slug: string;
   city: string;
+  state?: string;
   ownerPhone: string;
   ownerName: string;
   ownerEmail: string;
@@ -119,7 +120,7 @@ const ensureSalon = async (blueprint: DemoSalonBlueprint) => {
       area: blueprint.area,
       landmark: blueprint.landmark,
       city: blueprint.city,
-      state: 'Maharashtra',
+      state: blueprint.state ?? 'Maharashtra',
       postalCode: '400000',
       country: 'India',
     },
@@ -216,16 +217,19 @@ const ensureBarber = async ({
   services: MongooseTypes.ObjectId[];
 }) => {
   const user = await ensureUser({ phone: userPhone, name: userName, email, role: USER_ROLES.BARBER });
-  const existing = await Barber.findOne({ salon: salonId, slug });
+  const existing = await Barber.findOne({ salon: salonId, name: barberName });
   if (existing) {
     return { user, barber: existing };
   }
+
+  const conflictingSlug = await Barber.exists({ slug });
+  const uniqueSlug = conflictingSlug ? `${slug}-${salonId.toString().slice(-6)}` : slug;
 
   const barber = await Barber.create({
     user: user._id,
     salon: salonId,
     name: barberName,
-    slug,
+    slug: uniqueSlug,
     bio,
     experienceYears,
     specializations: [
@@ -433,6 +437,24 @@ const createDemoData = async () => {
   }
 
   const salonBlueprints: DemoSalonBlueprint[] = [
+    {
+      name: 'Bold Trim Club',
+      slug: 'bold-trim-club',
+      city: 'Delhi',
+      state: 'Delhi',
+      ownerPhone: '+919000000071',
+      ownerName: 'Demo Delhi Owner',
+      ownerEmail: 'bold.trim.owner@demo.bookmynai.com',
+      contactPhone: '+919000000072',
+      latitude: 28.6139,
+      longitude: 77.209,
+      addressLine1: '12 Connaught Place',
+      area: 'Connaught Place',
+      landmark: 'Near Rajiv Chowk Metro',
+      description: 'A modern Delhi grooming studio for precision cuts, beard care and classic styling.',
+      capacity: 3,
+      facilities: [SALON_FACILITY.AC, SALON_FACILITY.WIFI, SALON_FACILITY.PARKING, SALON_FACILITY.CARD_PAYMENT, SALON_FACILITY.UPI, SALON_FACILITY.WAITING_AREA],
+    },
     {
       name: 'Urban Trim Studio',
       slug: 'urban-trim-studio',

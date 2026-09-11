@@ -4,6 +4,7 @@ import { Card } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { Star, MapPin, Clock } from 'lucide-react';
+import { FavoriteButton } from '@/components/customer/FavoriteButton';
 
 interface Service {
   _id: string;
@@ -114,6 +115,7 @@ export default async function BarberDetailPage({
                 <div className="mb-6">
                   <h1 className="text-4xl font-bold text-foreground mb-2">{barber.name}</h1>
                   <p className="text-lg text-foreground-secondary">Professional Barber</p>
+                  <FavoriteButton targetType="BARBER" targetId={barber._id} />
                 </div>
 
                 {/* Rating & Experience */}
@@ -250,6 +252,13 @@ export default async function BarberDetailPage({
                   <p className="text-sm text-foreground-secondary">
                     Book barber services at your location
                   </p>
+                  <div className="space-y-2 pt-2">
+                    {(barber.services || []).map((service) => (
+                      <Link key={service._id} href={`/home-service/new?barberId=${barber._id}&salonId=${barber.salon?._id}&serviceId=${service._id}`}>
+                        <Button variant="primary" fullWidth>Book {service.name} at home</Button>
+                      </Link>
+                    ))}
+                  </div>
                 </div>
               </Card>
             )}

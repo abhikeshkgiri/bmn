@@ -315,6 +315,7 @@ export async function listSalons(options: {
   state?: string;
   isVerified?: boolean;
   isActive?: boolean;
+  slug?: string;
   search?: string;
   sortBy?: string;
 }): Promise<{ salons: ISalon[]; total: number; page: number; limit: number }> {
@@ -340,6 +341,10 @@ export async function listSalons(options: {
     query.isActive = options.isActive;
   } else {
     query.isActive = true;
+  }
+
+  if (options.slug) {
+    query.slug = options.slug.trim().toLowerCase();
   }
 
   // Search

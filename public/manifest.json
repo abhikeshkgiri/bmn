@@ -1,6 +1,6 @@
 {
-  "name": "BookMyNai - Salon Booking & Barber Services",
-  "short_name": "BookMyNai",
+  "name": "BMN - Salon Booking & Barber Services",
+  "short_name": "BMN",
   "description": "Book nearby salon appointments, reserve time slots, and get expert barber services",
   "start_url": "/",
   "scope": "/",

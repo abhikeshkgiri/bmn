@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/Loading';
 import { useCurrentLocation } from '@/hooks/useCurrentLocation';
 import { formatDistance, calculateDistance } from '@/utils/distance';
 import { MapPin, Phone, Mail, Globe, Star, Check, Navigation } from 'lucide-react';
+import { FavoriteButton } from '@/components/customer/FavoriteButton';
 
 interface Salon {
   _id: string;
@@ -60,6 +61,7 @@ const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satu
 
 export default function SalonDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const slug = params.slug as string;
   const { latitude: userLat, longitude: userLng } = useCurrentLocation();
 
@@ -82,14 +84,17 @@ export default function SalonDetailPage() {
         setLoading(true);
         setError(null);
 
-        // First get salon by slug from /api/salons listing
-        const listResponse = await fetch(`/api/salons?search=${encodeURIComponent(slug)}`);
+        const listResponse = await fetch(`/api/salons?slug=${encodeURIComponent(slug)}`);
         const listData = await listResponse.json();
 
         if (listData.success && listData.data.length > 0) {
-          const foundSalon = listData.data.find((s: Salon) => s.slug === slug);
+          const foundSalon = listData.data.find((s: Salon) => s.slug === slug.toLowerCase());
           if (foundSalon) {
             setSalon(foundSalon);
+            if (new URLSearchParams(window.location.search).get('book') === '1') {
+              router.replace(`/book/${foundSalon.slug}`);
+              return;
+            }
             return;
           }
         }
@@ -106,7 +111,7 @@ export default function SalonDetailPage() {
     if (slug) {
       fetchSalon();
     }
-  }, [slug]);
+  }, [router, slug]);
 
   if (loading) {
     return (
@@ -193,7 +198,8 @@ export default function SalonDetailPage() {
 
             {/* Quick Actions */}
             <div className="flex flex-wrap gap-3">
-              <Button variant="primary">Book Appointment</Button>
+              <Button variant="primary" onClick={() => router.push(`/book/${salon.slug}`)}>Book Appointment</Button>
+              <FavoriteButton targetType="SALON" targetId={salon._id} />
               <Button variant="ghost">Share</Button>
             </div>
           </div>
@@ -333,7 +339,7 @@ export default function SalonDetailPage() {
                     {salon.isActive ? 'Active' : 'Inactive'}
                   </Badge>
                 </div>
-                <Button variant="primary" fullWidth>
+                <Button variant="primary" fullWidth onClick={() => router.push(`/book/${salon.slug}`)}>
                   Book Appointment
                 </Button>
               </div>

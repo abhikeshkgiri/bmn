@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   ArrowLeft,
   ArrowRight,
@@ -447,8 +448,9 @@ export default function LoginPage() {
             {/* Footer */}
             <div className="mt-8 border-t border-border pt-6 text-center">
               <p className="text-sm text-foreground-secondary">
-                New to BookMyNai? Create an account after login
+                New to BookMyNai? <Link href="/signup" className="font-semibold text-brand-pink">Create a customer account</Link>
               </p>
+              <p className="mt-2 text-sm text-foreground-secondary"><Link href="/barber/signup" className="font-semibold text-brand-pink">Sign up as a Barber</Link></p>
             </div>
           </Card>
 

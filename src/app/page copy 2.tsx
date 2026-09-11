@@ -315,7 +315,7 @@ export default async function HomePage() {
           <NavbarMenuItem href="/salons">Salons</NavbarMenuItem>
           <NavbarMenuItem href="/services">Services</NavbarMenuItem>
           <NavbarMenuItem href="/offers">Offers</NavbarMenuItem>
-          <NavbarMenuItem href="/business">For Business</NavbarMenuItem>
+          <NavbarMenuItem href="/salon">For Business</NavbarMenuItem>
         </NavbarMenu>
         <NavbarActions>
           <Link href="/login">
@@ -638,13 +638,13 @@ export default async function HomePage() {
               </div>
 
               <div className="flex flex-col gap-4 sm:flex-row">
-                <Link href="/business/signup">
+                <Link href="/salon">
                   <Button variant="primary" size="lg" className="w-full">
                     Sign Up for Business
                     <ArrowRight size={18} className="ml-2" />
                   </Button>
                 </Link>
-                <Link href="/business">
+                <Link href="/salon">
                   <Button variant="outline" size="lg" className="w-full border-white text-white hover:bg-white/10">
                     Learn More
                   </Button>
@@ -667,31 +667,30 @@ export default async function HomePage() {
             </FooterSection>
 
             <FooterSection title="For Businesses">
-              <FooterLink href="/business">Why BookMyNai?</FooterLink>
-              <FooterLink href="/business/signup">Get Started</FooterLink>
-              <FooterLink href="/business/pricing">Pricing</FooterLink>
-              <FooterLink href="/business/contact">Contact Sales</FooterLink>
+              <FooterLink href="/salon">Salon portal</FooterLink>
+              <FooterLink href="/salon">Get Started</FooterLink>
+              <FooterLink href="/support">Support</FooterLink>
             </FooterSection>
 
             <FooterSection title="Company">
-              <FooterLink href="/about">About Us</FooterLink>
-              <FooterLink href="/blog">Blog</FooterLink>
-              <FooterLink href="/careers">Careers</FooterLink>
-              <FooterLink href="/press">Press</FooterLink>
+              <FooterLink href="/support">About Us</FooterLink>
+              <FooterLink href="/support">Blog</FooterLink>
+              <FooterLink href="/support">Careers</FooterLink>
+              <FooterLink href="/support">Press</FooterLink>
             </FooterSection>
 
             <FooterSection title="Support">
-              <FooterLink href="/help">Help Center</FooterLink>
-              <FooterLink href="/contact">Contact Us</FooterLink>
-              <FooterLink href="/faq">FAQ</FooterLink>
-              <FooterLink href="/status">Status</FooterLink>
+              <FooterLink href="/support">Help Center</FooterLink>
+              <FooterLink href="/support">Contact Us</FooterLink>
+              <FooterLink href="/support">FAQ</FooterLink>
+              <FooterLink href="/support">Status</FooterLink>
             </FooterSection>
 
             <FooterSection title="Legal">
-              <FooterLink href="/privacy">Privacy Policy</FooterLink>
-              <FooterLink href="/terms">Terms of Service</FooterLink>
-              <FooterLink href="/refund">Refund Policy</FooterLink>
-              <FooterLink href="/cookies">Cookie Policy</FooterLink>
+              <FooterLink href="/support">Privacy Policy</FooterLink>
+              <FooterLink href="/support">Terms of Service</FooterLink>
+              <FooterLink href="/support">Refund Policy</FooterLink>
+              <FooterLink href="/support">Cookie Policy</FooterLink>
             </FooterSection>
           </div>
 

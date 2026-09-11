@@ -363,7 +363,7 @@ export default function HomePage() {
           <NavbarMenuItem href="/salons">Salons</NavbarMenuItem>
           <NavbarMenuItem href="/services">Services</NavbarMenuItem>
           <NavbarMenuItem href="/offers">Offers</NavbarMenuItem>
-          <NavbarMenuItem href="/business">For Business</NavbarMenuItem>
+          <NavbarMenuItem href="/salon">For Business</NavbarMenuItem>
         </NavbarMenu>
         <NavbarActions>
           <Link href="/login"><Button variant="outline" size="sm">Login</Button></Link>
@@ -572,8 +572,8 @@ export default function HomePage() {
                 </ul>
               </div>
               <div className="flex flex-col gap-4 sm:flex-row">
-                <Link href="/business/signup"><Button variant="primary" size="lg" className="w-full">Sign Up for Business <ArrowRight size={18} className="ml-2" /></Button></Link>
-                <Link href="/business"><Button variant="outline" size="lg" className="w-full border-white bg-transparent text-white hover:bg-white/10 hover:text-white">Learn More</Button></Link>
+                <Link href="/salon"><Button variant="primary" size="lg" className="w-full">Sign Up for Business <ArrowRight size={18} className="ml-2" /></Button></Link>
+                <Link href="/salon"><Button variant="outline" size="lg" className="w-full border-white bg-transparent text-white hover:bg-white/10 hover:text-white">Learn More</Button></Link>
               </div>
             </div>
           </div>
@@ -584,10 +584,10 @@ export default function HomePage() {
         <div className="mx-auto max-w-7xl px-4 py-12 md:py-16">
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
             <FooterSection title="Product"><FooterLink href="/salons">Browse Salons</FooterLink><FooterLink href="/services">Services</FooterLink><FooterLink href="/offers">Offers</FooterLink><FooterLink href="/search">Search</FooterLink></FooterSection>
-            <FooterSection title="For Businesses"><FooterLink href="/business">Why BookMyNai?</FooterLink><FooterLink href="/business/signup">Get Started</FooterLink><FooterLink href="/business/pricing">Pricing</FooterLink><FooterLink href="/business/contact">Contact Sales</FooterLink></FooterSection>
-            <FooterSection title="Company"><FooterLink href="/about">About Us</FooterLink><FooterLink href="/blog">Blog</FooterLink><FooterLink href="/careers">Careers</FooterLink><FooterLink href="/press">Press</FooterLink></FooterSection>
-            <FooterSection title="Support"><FooterLink href="/help">Help Center</FooterLink><FooterLink href="/contact">Contact Us</FooterLink><FooterLink href="/faq">FAQ</FooterLink><FooterLink href="/status">Status</FooterLink></FooterSection>
-            <FooterSection title="Legal"><FooterLink href="/privacy">Privacy Policy</FooterLink><FooterLink href="/terms">Terms of Service</FooterLink><FooterLink href="/refund">Refund Policy</FooterLink><FooterLink href="/cookies">Cookie Policy</FooterLink></FooterSection>
+            <FooterSection title="For Businesses"><FooterLink href="/salon">Salon portal</FooterLink><FooterLink href="/salon">Get Started</FooterLink><FooterLink href="/support">Support</FooterLink></FooterSection>
+            <FooterSection title="Company"><FooterLink href="/support">About Us</FooterLink><FooterLink href="/support">Blog</FooterLink><FooterLink href="/support">Careers</FooterLink><FooterLink href="/support">Press</FooterLink></FooterSection>
+            <FooterSection title="Support"><FooterLink href="/support">Help Center</FooterLink><FooterLink href="/support">Contact Us</FooterLink><FooterLink href="/support">FAQ</FooterLink><FooterLink href="/support">Status</FooterLink></FooterSection>
+            <FooterSection title="Legal"><FooterLink href="/support">Privacy Policy</FooterLink><FooterLink href="/support">Terms of Service</FooterLink><FooterLink href="/support">Refund Policy</FooterLink><FooterLink href="/support">Cookie Policy</FooterLink></FooterSection>
           </div>
           <FooterDivider />
           <FooterBottom>

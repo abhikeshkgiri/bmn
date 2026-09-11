@@ -131,6 +131,7 @@ export async function GET(request: NextRequest) {
     const state = searchParams.get('state') || undefined;
     const isVerified = searchParams.get('isVerified') ? searchParams.get('isVerified') === 'true' : undefined;
     const search = searchParams.get('search') || undefined;
+    const slug = searchParams.get('slug') || undefined;
     const sortBy = searchParams.get('sortBy') || 'newest';
 
     // Validate page and limit
@@ -167,6 +168,7 @@ export async function GET(request: NextRequest) {
       state,
       isVerified,
       search,
+      slug,
       sortBy,
       isActive: true, // Public endpoint only shows active salons
     });

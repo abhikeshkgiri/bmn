@@ -7,6 +7,7 @@
 import { Types } from 'mongoose';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import Coupon, { type ICoupon, CouponType } from '@/models/Coupon';
+import CouponUsage from '@/models/CouponUsage';
 import { connectDB } from '@/lib/db';
 import { COUPON_TYPE } from '@/constants/coupons';
 
@@ -94,6 +95,16 @@ export async function validateCoupon(request: CouponApplyRequest): Promise<Coupo
     };
   }
 
+  if (coupon.perUserLimit) {
+    const usedByCustomer = await CouponUsage.countDocuments({
+      coupon: coupon._id,
+      customer: new Types.ObjectId(request.customerId),
+    });
+    if (usedByCustomer >= coupon.perUserLimit) {
+      return { valid: false, error: COUPON_ERRORS.COUPON_USER_LIMIT.message };
+    }
+  }
+
   // Check salon applicability
   if (coupon.applicable.salons && coupon.applicable.salons.length > 0) {
     const salonId = new Types.ObjectId(request.salonId);
@@ -164,7 +175,7 @@ export async function validateCoupon(request: CouponApplyRequest): Promise<Coupo
  * PERCENTAGE: Apply percentage, cap at maximumDiscount if specified
  * FIXED: Apply fixed amount
  */
-function calculateDiscount(coupon: ICoupon, subtotal: number): number {
+export function calculateDiscount(coupon: ICoupon, subtotal: number): number {
   if (coupon.discountType === COUPON_TYPE.PERCENTAGE) {
     let discount = Math.floor((subtotal * coupon.discountValue) / 100);
 
@@ -347,12 +358,11 @@ export async function refundCouponUsage(couponCode: string): Promise<void> {
  * Would need a separate CouponUsage collection in production
  */
 export async function checkPerUserUsage(
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   couponCode: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   customerId: string
 ): Promise<number> {
-  // TODO: Implement with CouponUsage collection
-  // For now, return 0 (would query usage history)
-  return 0;
+  await connectDB();
+  const coupon = await Coupon.findOne({ code: couponCode.toUpperCase().trim() }).select('_id');
+  if (!coupon) return 0;
+  return CouponUsage.countDocuments({ coupon: coupon._id, customer: new Types.ObjectId(customerId) });
 }

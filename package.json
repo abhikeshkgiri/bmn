@@ -1,5 +1,5 @@
 {
-  "name": "bookmynai",
+  "name": "bmn",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -8,10 +8,15 @@
     "start": "node ./scripts/next-runner.js start",
     "lint": "eslint",
     "test:phase20": "node scripts/test-phase20-runner.cjs",
-    "test:db": "node -r ts-node/register/transpile-only -r tsconfig-paths/register -e \"require('./scripts/test-db.ts')\"",
-    "seed": "node -r ts-node/register/transpile-only -r tsconfig-paths/register -e \"require('./scripts/seed.ts')\"",
-    "seed:demo": "node -r ts-node/register/transpile-only -r tsconfig-paths/register -e \"require('./scripts/seed-demo.ts')\"",
-    "seed:demo:reset": "node -r ts-node/register/transpile-only -r tsconfig-paths/register -e \"require('./scripts/seed-demo.ts')\" --reset"
+    "test:phase21": "node scripts/test-phase21-runner.cjs",
+    "test:phase22": "node test-phase22-runner.cjs",
+    "test:phase22.1": "node test-phase22-1-runner.cjs",
+    "test:phase23": "node test-phase23-runner.cjs",
+    "test:phase24": "node test-phase24-runner.cjs",
+    "test:db": "node -e \"process.env.TS_NODE_PROJECT='tsconfig.scripts.json'; require('ts-node/register/transpile-only'); require('tsconfig-paths/register'); require('./scripts/test-db.ts')\"",
+    "seed": "node -e \"process.env.TS_NODE_PROJECT='tsconfig.scripts.json'; require('ts-node/register/transpile-only'); require('tsconfig-paths/register'); require('./scripts/seed.ts')\"",
+    "seed:demo": "node -e \"process.env.TS_NODE_PROJECT='tsconfig.scripts.json'; require('ts-node/register/transpile-only'); require('tsconfig-paths/register'); require('./scripts/seed-demo.ts')\"",
+    "seed:demo:reset": "node -e \"process.env.TS_NODE_PROJECT='tsconfig.scripts.json'; require('ts-node/register/transpile-only'); require('tsconfig-paths/register'); require('./scripts/seed-demo.ts')\" --reset"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.8.0",

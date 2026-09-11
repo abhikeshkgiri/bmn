@@ -22,6 +22,7 @@ interface IBarber extends Document {
   rating: number;
   reviewCount: number;
   isAvailable: boolean;
+  bookingLockVersion: number;
   offersHomeService: boolean;
   homeServiceRadius?: number; // in kilometers
   isVerified: boolean;
@@ -118,6 +119,11 @@ const BarberSchema = new Schema<IBarber>(
     isAvailable: {
       type: Boolean,
       default: true,
+    },
+    bookingLockVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
     offersHomeService: {
       type: Boolean,

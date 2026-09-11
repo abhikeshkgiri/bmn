@@ -12,7 +12,8 @@ import {
 
 interface IPayment extends Document {
   _id: Types.ObjectId;
-  booking: Types.ObjectId; // Reference to Booking
+  booking?: Types.ObjectId; // Reference to Booking
+  membership?: Types.ObjectId;
   customer: Types.ObjectId; // Reference to User (CUSTOMER)
   amount: number; // in paise (INR * 100)
   currency: PaymentCurrency;
@@ -33,8 +34,10 @@ const PaymentSchema = new Schema<IPayment>(
     booking: {
       type: Schema.Types.ObjectId,
       ref: 'Booking',
-      required: true,
+      required: false,
+      index: true,
     },
+    membership: { type: Schema.Types.ObjectId, ref: 'CustomerMembership', default: null, index: true },
     customer: {
       type: Schema.Types.ObjectId,
       ref: 'User',

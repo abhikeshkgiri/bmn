@@ -226,6 +226,7 @@ export interface AuthUser {
   role: UserRole;
   isActive: boolean;
   isVerified: boolean;
+  notificationPreferences?: { inApp: boolean; push: boolean };
 }
 
 export interface AuthResponse {

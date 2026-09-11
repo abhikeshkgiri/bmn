@@ -7,6 +7,7 @@ import { Types } from 'mongoose';
 import { LoyaltyAccount, LoyaltyTransaction, TransactionType } from '@/models/Loyalty';
 import { CustomerMembership, MembershipPlan, type IMembershipPlan, MembershipStatus } from '@/models/Membership';
 import { connectDB } from '@/lib/db';
+import mongoose from 'mongoose';
 
 export const LOYALTY_CONFIG = {
   POINTS_PER_RUPEE: 1, // 1 point per rupee spent
@@ -125,7 +126,9 @@ export async function awardLoyaltyPoints(
  */
 export async function redeemLoyaltyPoints(
   customerId: string,
-  pointsToRedeem: number
+  pointsToRedeem: number,
+  session?: mongoose.ClientSession,
+  bookingId?: string,
 ): Promise<{ discount: number; newBalance: number }> {
   await connectDB();
 
@@ -133,7 +136,9 @@ export async function redeemLoyaltyPoints(
     throw LOYALTY_ERRORS.INVALID_AMOUNT;
   }
 
-  const account = await LoyaltyAccount.findOne({ customer: new Types.ObjectId(customerId) });
+  const accountQuery = LoyaltyAccount.findOne({ customer: new Types.ObjectId(customerId) });
+  if (session) accountQuery.session(session);
+  const account = await accountQuery;
 
   if (!account) {
     throw LOYALTY_ERRORS.ACCOUNT_NOT_FOUND;
@@ -158,7 +163,7 @@ export async function redeemLoyaltyPoints(
         redeemedPoints: pointsToRedeem,
       },
     },
-    { new: true }
+    { new: true, ...(session ? { session } : {}) }
   );
 
   if (!updated) {
@@ -166,14 +171,15 @@ export async function redeemLoyaltyPoints(
   }
 
   // Record transaction
-  await LoyaltyTransaction.create({
+  await LoyaltyTransaction.create([{
     account: account._id,
     customer: new Types.ObjectId(customerId),
     transactionType: TransactionType.REDEEM,
     points: -pointsToRedeem,
     reason: `Points redeemed for discount`,
+    bookingId: bookingId ? new Types.ObjectId(bookingId) : undefined,
     description: `${pointsToRedeem} points = ₹${(discount / 100).toFixed(2)} discount`,
-  });
+  }], session ? { session } : undefined);
 
   return {
     discount,
@@ -223,6 +229,21 @@ export async function reversePointsForRefund(bookingId: string, customerId: stri
     reason: `Booking cancelled - points reversed`,
     bookingId: new Types.ObjectId(bookingId),
   });
+}
+
+export async function refundRedeemedPoints(bookingId: string, customerId: string): Promise<void> {
+  await connectDB();
+  const redemption = await LoyaltyTransaction.findOne({ bookingId: new Types.ObjectId(bookingId), transactionType: TransactionType.REDEEM });
+  if (!redemption) return;
+  const alreadyRefunded = await LoyaltyTransaction.findOne({ bookingId: new Types.ObjectId(bookingId), transactionType: TransactionType.REFUND_REVERSAL, reason: 'Checkout redemption refunded' });
+  if (alreadyRefunded) return;
+  const account = await LoyaltyAccount.findOneAndUpdate(
+    { customer: new Types.ObjectId(customerId) },
+    { $inc: { pointsBalance: -redemption.points, redeemedPoints: redemption.points } },
+    { new: true },
+  );
+  if (!account) return;
+  await LoyaltyTransaction.create({ account: account._id, customer: new Types.ObjectId(customerId), transactionType: TransactionType.REFUND_REVERSAL, points: -redemption.points, reason: 'Checkout redemption refunded', bookingId: new Types.ObjectId(bookingId) });
 }
 
 /**
