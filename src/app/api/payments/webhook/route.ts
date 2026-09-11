@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyWebhookSignature } from '@/lib/razorpay';
 import { handleWebhookEvent } from '@/services/payment.service';
+import crypto from 'crypto';
 
 export async function POST(request: NextRequest) {
   try {
@@ -49,6 +50,7 @@ export async function POST(request: NextRequest) {
     const payload = JSON.parse(body);
     const event = payload.event;
     const data = payload.payload;
+    const eventId = request.headers.get('x-razorpay-event-id') || crypto.createHash('sha256').update(body).digest('hex');
 
     if (!event) {
       return NextResponse.json(
@@ -65,19 +67,17 @@ export async function POST(request: NextRequest) {
 
     // Handle webhook event
     // Supported events: payment.captured, payment.failed, refund.created, refund.processed
-    await handleWebhookEvent(event, data || {});
+    await handleWebhookEvent(event, data || {}, eventId);
 
     return NextResponse.json(
       {
         success: true,
         message: 'Webhook processed successfully',
       },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (error) {
     console.error('Webhook processing error:', error);
-    // Return 200 to prevent Razorpay from retrying
-    // but log the error for manual investigation
     return NextResponse.json(
       {
         success: false,
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
           message: 'Error processing webhook',
         },
       },
-      { status: 200 } // Return 200 to stop retries
+      { status: 500 }
     );
   }
 }

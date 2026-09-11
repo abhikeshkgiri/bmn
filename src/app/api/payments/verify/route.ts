@@ -9,6 +9,7 @@ import { getCurrentUser } from '@/lib/auth';
 import { verifyRazorpayPayment } from '@/services/payment.service';
 import { VerifyPaymentSchema } from '@/validations/payment.schema';
 import { ZodError } from 'zod';
+import { isRateLimited } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,6 +26,10 @@ export async function POST(request: NextRequest) {
         },
         { status: 401 }
       );
+    }
+
+    if (isRateLimited(`payment-verify:${currentUser._id}`, 10, 10 * 60 * 1000)) {
+      return NextResponse.json({ success: false, error: { code: 'RATE_LIMITED', message: 'Too many payment verification attempts' } }, { status: 429 });
     }
 
     // Parse and validate request body

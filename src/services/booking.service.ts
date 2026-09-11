@@ -33,6 +33,26 @@ import {
   notifyBookingConfirmed,
 } from '@/services/notification.service';
 import mongoose from 'mongoose';
+import { recordAuditEvent } from '@/services/audit.service';
+
+const BOOKING_HOLD_MINUTES = 10;
+
+function activeBookingFilter(now = new Date()): Record<string, unknown> {
+  return {
+    $or: [
+      { status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] } },
+      { status: BOOKING_STATUS.PENDING, holdExpiresAt: { $gt: now } },
+    ],
+  };
+}
+
+async function releaseExpiredBookingHolds(session?: mongoose.ClientSession): Promise<void> {
+  await Booking.updateMany(
+    { status: BOOKING_STATUS.PENDING, holdExpiresAt: { $lte: new Date() } },
+    { $set: { status: BOOKING_STATUS.CANCELLED, cancellationReason: 'Payment hold expired' } },
+    session ? { session } : undefined,
+  );
+}
 
 /**
  * Error codes for booking operations
@@ -88,12 +108,13 @@ interface AvailabilityResponse {
  * Generate next available booking number
  * Format: BMN-YYYY-XXXXXX
  */
-async function generateBookingNumber(): Promise<string> {
+async function generateBookingNumber(session?: mongoose.ClientSession): Promise<string> {
   const year = new Date().getFullYear();
-  const lastBooking = await Booking.findOne()
+  const query = Booking.findOne()
     .sort({ createdAt: -1 })
-    .select('bookingNumber')
-    .exec();
+    .select('bookingNumber');
+  if (session) query.session(session);
+  const lastBooking = await query.exec();
 
   let sequence = 1;
 
@@ -425,90 +446,96 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
   // and no race conditions can occur
   
   const session = await mongoose.startSession();
-  session.startTransaction();
+  let populatedBooking: IBooking | null = null;
 
   try {
-    // Re-check barber overlap one final time (within transaction)
-    const barberOverlap = await Booking.findOne(
-      {
-        barber: new Types.ObjectId(payload.barberId),
-        appointmentDate: {
-          $gte: new Date(appointmentDate.toDateString()),
-          $lt: new Date(new Date(appointmentDate).setDate(appointmentDate.getDate() + 1)),
+    await session.withTransaction(async () => {
+      await releaseExpiredBookingHolds(session);
+
+      // A write to the salon document serializes capacity allocation for that salon.
+      await Salon.updateOne(
+        { _id: new Types.ObjectId(payload.salonId) },
+        { $inc: { bookingLockVersion: 1 } },
+        { session },
+      );
+
+      const dayStart = new Date(appointmentDate.toDateString());
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const activeFilter = activeBookingFilter();
+
+      const barberOverlap = await Booking.findOne(
+        {
+          barber: new Types.ObjectId(payload.barberId),
+          appointmentDate: { $gte: dayStart, $lt: dayEnd },
+          ...activeFilter,
+          startTime: { $lt: endTime },
+          endTime: { $gt: payload.startTime },
         },
-        status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
-        startTime: { $lt: endTime },
-        endTime: { $gt: payload.startTime },
-      },
-      {},
-      { session }
-    );
+        {},
+        { session },
+      );
 
-    if (barberOverlap) {
-      throw BOOKING_ERRORS.OVERLAPPING_BOOKING;
-    }
+      if (barberOverlap) {
+        throw BOOKING_ERRORS.OVERLAPPING_BOOKING;
+      }
 
-    // Check salon capacity atomically
-    // Count confirmed/in-progress bookings that overlap at this time slot
-    const salonCapacity = salon.capacity || 4;
-    const bookingsAtThisSlot = await Booking.countDocuments(
-      {
+      const salonCapacity = salon.capacity || 4;
+      const bookingsAtThisSlot = await Booking.countDocuments(
+        {
+          salon: new Types.ObjectId(payload.salonId),
+          appointmentDate: { $gte: dayStart, $lt: dayEnd },
+          ...activeFilter,
+          startTime: { $lt: endTime },
+          endTime: { $gt: payload.startTime },
+        },
+        { session },
+      );
+
+      if (bookingsAtThisSlot >= salonCapacity) {
+        throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
+      }
+
+      const bookingNumber = await generateBookingNumber(session);
+      const servicePrice = service.discountPrice || service.price;
+      const discountAmount = 0;
+      const taxAmount = 0;
+      const totalAmount = servicePrice - discountAmount + taxAmount;
+
+      const bookingDoc = new Booking({
+        bookingNumber,
+        customer: new Types.ObjectId(payload.currentUser._id),
         salon: new Types.ObjectId(payload.salonId),
-        appointmentDate: {
-          $gte: new Date(appointmentDate.toDateString()),
-          $lt: new Date(new Date(appointmentDate).setDate(appointmentDate.getDate() + 1)),
-        },
-        status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
-        startTime: { $lt: endTime },
-        endTime: { $gt: payload.startTime },
-      },
-      { session }
-    );
+        barber: new Types.ObjectId(payload.barberId),
+        service: new Types.ObjectId(payload.serviceId),
+        appointmentDate,
+        startTime: payload.startTime,
+        endTime,
+        duration: service.duration,
+        servicePrice,
+        discountAmount,
+        taxAmount,
+        totalAmount,
+        status: BOOKING_STATUS.PENDING,
+        paymentStatus: PAYMENT_STATUS.PENDING,
+        holdExpiresAt: new Date(Date.now() + BOOKING_HOLD_MINUTES * 60 * 1000),
+        bookingType: payload.bookingType,
+        customerNotes: payload.customerNotes || null,
+      });
 
-    if (bookingsAtThisSlot >= salonCapacity) {
-      throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
-    }
-
-    // Generate booking number
-    const bookingNumber = await generateBookingNumber();
-
-    // Calculate price (from database, never trust frontend)
-    const servicePrice = service.discountPrice || service.price;
-    const discountAmount = 0; // No discount in Phase 8
-    const taxAmount = 0; // No tax in Phase 8
-    const totalAmount = servicePrice - discountAmount + taxAmount;
-
-    // Create booking atomically within transaction
-    const bookingDoc = new Booking({
-      bookingNumber,
-      customer: new Types.ObjectId(payload.currentUser._id),
-      salon: new Types.ObjectId(payload.salonId),
-      barber: new Types.ObjectId(payload.barberId),
-      service: new Types.ObjectId(payload.serviceId),
-      appointmentDate,
-      startTime: payload.startTime,
-      endTime,
-      duration: service.duration,
-      servicePrice,
-      discountAmount,
-      taxAmount,
-      totalAmount,
-      status: BOOKING_STATUS.PENDING,
-      paymentStatus: PAYMENT_STATUS.PENDING,
-      bookingType: payload.bookingType,
-      customerNotes: payload.customerNotes || null,
+      const booking = await bookingDoc.save({ session });
+      populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
     });
 
-    const booking = await bookingDoc.save({ session });
-    await session.commitTransaction();
+    const bookingToReturn = populatedBooking as IBooking | null;
+    if (!bookingToReturn) {
+      throw new Error('BOOKING_CREATION_FAILED');
+    }
 
-    // Populate after transaction completes
-    const populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
-    await notifyBookingCreated(populatedBooking._id.toString());
+    await notifyBookingCreated(bookingToReturn._id.toString());
 
-    return populatedBooking;
+    return bookingToReturn;
   } catch (error) {
-    await session.abortTransaction();
     throw error;
   } finally {
     await session.endSession();
@@ -525,6 +552,7 @@ export async function getAvailableSlots(
   appointmentDate: string
 ): Promise<AvailabilityResponse> {
   await connectDB();
+  await releaseExpiredBookingHolds();
 
   // Validate inputs
   const salon = await Salon.findById(salonId).select('openingHours capacity slotIntervalMinutes');
@@ -556,7 +584,7 @@ export async function getAvailableSlots(
       $gte: new Date(date.toDateString()),
       $lt: new Date(new Date(date).setDate(date.getDate() + 1)),
     },
-    status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
+    ...activeBookingFilter(),
   }).select('startTime endTime duration');
 
   // Get salon opening hours
@@ -638,6 +666,7 @@ export async function getEarliestAvailableSlot(
   daysToCheck: number = 7
 ): Promise<{ date: string; time: string } | null> {
   await connectDB();
+  await releaseExpiredBookingHolds();
 
   const salon = await Salon.findById(salonId).select('openingHours capacity slotIntervalMinutes');
   if (!salon) {
@@ -669,7 +698,7 @@ export async function getEarliestAvailableSlot(
         $gte: new Date(checkDate.toDateString()),
         $lt: new Date(new Date(checkDate).setDate(checkDate.getDate() + 1)),
       },
-      status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
+      ...activeBookingFilter(),
     }).select('startTime endTime');
 
     const [openHour, openMin] = openingTime.split(':').map(Number);
@@ -828,6 +857,13 @@ export async function cancelBooking(
 
   const populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
   await notifyBookingCancelled(populatedBooking._id.toString());
+  void recordAuditEvent({
+    actor: currentUser,
+    action: 'BOOKING_CANCELLED',
+    entityType: 'Booking',
+    entityId: bookingId,
+    metadata: { reason: reason || 'Customer cancelled' },
+  });
 
   return populatedBooking;
 }
@@ -901,6 +937,14 @@ export async function updateBookingStatus(
     await notifyBookingCancelled(populatedBooking._id.toString());
   }
 
+  void recordAuditEvent({
+    actor: currentUser,
+    action: 'BOOKING_STATUS_CHANGED',
+    entityType: 'Booking',
+    entityId: bookingId,
+    metadata: { status: newStatus },
+  });
+
   return populatedBooking;
 }
 
@@ -967,31 +1011,61 @@ export async function rescheduleBooking(
     throw BOOKING_ERRORS.INVALID_TIME;
   }
 
-  // Check for overlapping bookings with the new time (excluding this booking)
-  const existingBooking = await Booking.findOne({
-    _id: { $ne: new Types.ObjectId(bookingId) },
-    barber: booking.barber._id,
-    appointmentDate: {
-      $gte: new Date(newDate.toDateString()),
-      $lt: new Date(new Date(newDate).setDate(newDate.getDate() + 1)),
-    },
-    startTime: { $exists: true },
-    endTime: { $exists: true },
-    status: { $in: [BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] },
-  });
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      await Salon.updateOne(
+        { _id: booking.salon._id },
+        { $inc: { bookingLockVersion: 1 } },
+        { session },
+      );
 
-  if (existingBooking) {
-    const hasOverlap = isTimeOverlap(existingBooking.startTime, existingBooking.endTime, newStartTime, newEndTime);
-    if (hasOverlap) {
-      throw BOOKING_ERRORS.OVERLAPPING_BOOKING;
-    }
+      await releaseExpiredBookingHolds(session);
+      const dayStart = new Date(newDate.toDateString());
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const activeFilter = activeBookingFilter();
+      const existingBookings = await Booking.find({
+        _id: { $ne: new Types.ObjectId(bookingId) },
+        barber: booking.barber._id,
+        appointmentDate: { $gte: dayStart, $lt: dayEnd },
+        ...activeFilter,
+      }).session(session);
+
+      if (existingBookings.some((existingBooking) =>
+        isTimeOverlap(existingBooking.startTime, existingBooking.endTime, newStartTime, newEndTime))) {
+        throw BOOKING_ERRORS.OVERLAPPING_BOOKING;
+      }
+
+      const salonCapacity = (booking.salon as unknown as ISalon).capacity || 4;
+      const salonBookings = await Booking.countDocuments({
+        _id: { $ne: new Types.ObjectId(bookingId) },
+        salon: booking.salon._id,
+        appointmentDate: { $gte: dayStart, $lt: dayEnd },
+        ...activeFilter,
+        startTime: { $lt: newEndTime },
+        endTime: { $gt: newStartTime },
+      }).session(session);
+      if (salonBookings >= salonCapacity) {
+        throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
+      }
+
+      booking.appointmentDate = newDate;
+      booking.startTime = newStartTime;
+      booking.endTime = newEndTime;
+      await booking.save({ session });
+    });
+  } finally {
+    await session.endSession();
   }
 
-  // Update booking with new date/time
-  booking.appointmentDate = newDate;
-  booking.startTime = newStartTime;
-  booking.endTime = newEndTime;
-  await booking.save();
+  void recordAuditEvent({
+    actor: currentUser,
+    action: 'BOOKING_RESCHEDULED',
+    entityType: 'Booking',
+    entityId: bookingId,
+    metadata: { appointmentDate: newAppointmentDate, startTime: newStartTime },
+  });
 
   return booking.populate(['customer', 'salon', 'barber', 'service']);
 }

@@ -8,6 +8,7 @@ import { VerifyOtpSchema } from '@/validations/auth.schema';
 import { verifyOtpAndGetUser, createSessionToken } from '@/services/auth.service';
 import { SESSION_CONFIG } from '@/constants/auth';
 import { ZodError } from 'zod';
+import { getRequestIp, isRateLimited } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,6 +16,10 @@ export async function POST(request: NextRequest) {
 
     // Validate request
     const validatedData = VerifyOtpSchema.parse(body);
+
+    if (isRateLimited(`otp-verify:${getRequestIp(request)}:${validatedData.phone}`, 10, 15 * 60 * 1000)) {
+      return NextResponse.json({ success: false, error: 'Too many verification attempts' }, { status: 429 });
+    }
 
     // Verify OTP and get/create user
     const { user, isNewUser } = await verifyOtpAndGetUser(validatedData.phone, validatedData.otp);

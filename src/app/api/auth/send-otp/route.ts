@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SendOtpSchema } from '@/validations/auth.schema';
 import { requestOtp } from '@/services/auth.service';
 import { ZodError } from 'zod';
+import { getRequestIp, isRateLimited } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,6 +15,10 @@ export async function POST(request: NextRequest) {
 
     // Validate request
     const validatedData = SendOtpSchema.parse(body);
+
+    if (isRateLimited(`otp-ip:${getRequestIp(request)}`, 10, 15 * 60 * 1000)) {
+      return NextResponse.json({ success: false, message: 'Too many requests. Please try again later.' }, { status: 429 });
+    }
 
     // Request OTP
     const { otp, success } = await requestOtp(validatedData.phone);

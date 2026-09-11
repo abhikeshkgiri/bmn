@@ -6,6 +6,7 @@
 import { Types } from 'mongoose';
 import PushSubscription from '@/models/PushSubscription';
 import { connectDB } from '@/lib/db';
+import webpush from 'web-push';
 
 export interface PushSubscriptionPayload {
   endpoint: string;
@@ -35,7 +36,18 @@ export async function subscribeToPushNotifications(
   await connectDB();
 
   // Check if subscription already exists
-  const existing = await PushSubscription.findOne({ endpoint: subscription.endpoint });
+  const existing = await PushSubscription.findOne({
+    endpoint: subscription.endpoint,
+    user: new Types.ObjectId(userId),
+  });
+
+  const ownedByAnotherUser = await PushSubscription.exists({
+    endpoint: subscription.endpoint,
+    user: { $ne: new Types.ObjectId(userId) },
+  });
+  if (ownedByAnotherUser) {
+    throw new Error('PUSH_SUBSCRIPTION_OWNERSHIP_CONFLICT');
+  }
 
   if (existing) {
     // Update existing subscription
@@ -115,7 +127,6 @@ export async function isUserSubscribedToPush(userId: string): Promise<boolean> {
  */
 export async function sendPushNotificationToUser(
   userId: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _payload: PushNotificationPayload,
 ): Promise<number> {
   await connectDB();
@@ -126,15 +137,35 @@ export async function sendPushNotificationToUser(
     return 0;
   }
 
-  // In production, use web-push library to send actual push notifications
-  // For now, just mark as sent
-  const sendPromises = subscriptions.map((sub) =>
-    PushSubscription.findByIdAndUpdate(sub._id, { lastNotificationSent: new Date() })
-  );
+  const publicKey = process.env.PUSH_VAPID_PUBLIC_KEY;
+  const privateKey = process.env.PUSH_VAPID_PRIVATE_KEY;
+  const subject = process.env.PUSH_VAPID_SUBJECT;
+  if (!publicKey || !privateKey || !subject) {
+    return 0;
+  }
 
-  await Promise.all(sendPromises);
+  webpush.setVapidDetails(subject, publicKey, privateKey);
+  let sent = 0;
+  for (const sub of subscriptions) {
+    try {
+      await webpush.sendNotification(
+        {
+          endpoint: sub.endpoint,
+          keys: { auth: sub.auth, p256dh: sub.p256dh },
+        },
+        JSON.stringify(_payload),
+      );
+      await PushSubscription.findByIdAndUpdate(sub._id, { lastNotificationSent: new Date() });
+      sent += 1;
+    } catch (error) {
+      const statusCode = error && typeof error === 'object' && 'statusCode' in error ? error.statusCode : undefined;
+      if (statusCode === 404 || statusCode === 410) {
+        await removeInvalidPushSubscription(sub.endpoint);
+      }
+    }
+  }
 
-  return subscriptions.length;
+  return sent;
 }
 
 /**

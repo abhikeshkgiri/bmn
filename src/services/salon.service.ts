@@ -12,6 +12,7 @@ import { USER_ROLES } from '@/constants/roles';
 import type { AuthUser } from '@/types';
 import type { SalonCreateInput, SalonUpdateInput } from '@/validations/salon.schema';
 import type { ISalon } from '@/models/Salon';
+import { recordAuditEvent } from '@/services/audit.service';
 
 export interface SalonWithOwner extends Omit<ISalon, 'owner'> {
   owner: AuthUser;
@@ -228,6 +229,7 @@ export async function activateSalon(salonId: string, currentUser: AuthUser): Pro
 
   salon.isActive = true;
   await salon.save();
+  void recordAuditEvent({ actor: currentUser, action: 'SALON_ACTIVATED', entityType: 'Salon', entityId: salonId });
   return salon;
 }
 
@@ -253,6 +255,7 @@ export async function deactivateSalon(salonId: string, currentUser: AuthUser): P
 
   salon.isActive = false;
   await salon.save();
+  void recordAuditEvent({ actor: currentUser, action: 'SALON_DEACTIVATED', entityType: 'Salon', entityId: salonId });
   return salon;
 }
 
@@ -275,6 +278,7 @@ export async function verifySalon(salonId: string, currentUser: AuthUser): Promi
 
   salon.isVerified = true;
   await salon.save();
+  void recordAuditEvent({ actor: currentUser, action: 'SALON_VERIFIED', entityType: 'Salon', entityId: salonId });
   return salon;
 }
 
@@ -297,6 +301,7 @@ export async function unverifySalon(salonId: string, currentUser: AuthUser): Pro
 
   salon.isVerified = false;
   await salon.save();
+  void recordAuditEvent({ actor: currentUser, action: 'SALON_UNVERIFIED', entityType: 'Salon', entityId: salonId });
   return salon;
 }
 

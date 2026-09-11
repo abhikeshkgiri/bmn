@@ -9,6 +9,7 @@ import { SESSION_CONFIG, AUTH_ERRORS } from '@/constants/auth';
 import type { SessionPayload, AuthUser, UserRole } from '@/types';
 import User from '@/models/User';
 import { connectDB } from '@/lib/db';
+import { assertProductionEnvironment } from '@/lib/env';
 
 // Get the secret key for JWT signing/verification
 function getAuthSecret(): Uint8Array {
@@ -25,6 +26,7 @@ function getAuthSecret(): Uint8Array {
  */
 export async function getCurrentUser(): Promise<AuthUser | null> {
   try {
+    assertProductionEnvironment();
     const cookieStore = await cookies();
     const token = cookieStore.get(SESSION_CONFIG.COOKIE_NAME)?.value;
 

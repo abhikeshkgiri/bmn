@@ -97,6 +97,15 @@ class RateLimiter {
 // Singleton instance
 export const rateLimiter = new RateLimiter();
 
+export function getRequestIp(request: Request): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  return forwardedFor?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown';
+}
+
+export function isRateLimited(key: string, limit: number, windowMs: number): boolean {
+  return !rateLimiter.isAllowed(key, limit, windowMs);
+}
+
 // Optional: Run cleanup every 5 minutes in development
 if (process.env.NODE_ENV !== 'production') {
   setInterval(() => rateLimiter.cleanup(), 5 * 60 * 1000);

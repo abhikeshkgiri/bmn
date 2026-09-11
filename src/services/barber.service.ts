@@ -12,6 +12,7 @@ import { USER_ROLES } from '@/constants/roles';
 import type { AuthUser } from '@/types';
 import type { BarberCreateInput, BarberUpdateInput, BarberListQuery } from '@/validations/barber.schema';
 import type { IBarber } from '@/models/Barber';
+import { recordAuditEvent } from '@/services/audit.service';
 
 export interface PaginationData {
   page: number;
@@ -438,6 +439,13 @@ export async function updateBarberStatus(
     throw new Error('BARBER_UPDATE_FAILED: Failed to update barber status');
   }
 
+  void recordAuditEvent({
+    actor: currentUser,
+    action: isActive ? 'BARBER_ACTIVATED' : 'BARBER_DEACTIVATED',
+    entityType: 'Barber',
+    entityId: barberId,
+  });
+
   return updated;
 }
 
@@ -466,6 +474,13 @@ export async function verifyBarber(
   if (!updated) {
     throw new Error('BARBER_UPDATE_FAILED: Failed to verify barber');
   }
+
+  void recordAuditEvent({
+    actor: currentUser,
+    action: isVerified ? 'BARBER_VERIFIED' : 'BARBER_UNVERIFIED',
+    entityType: 'Barber',
+    entityId: barberId,
+  });
 
   return updated;
 }

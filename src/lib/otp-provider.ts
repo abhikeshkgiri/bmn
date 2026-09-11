@@ -13,6 +13,8 @@
  * - Twilio: OTP_TWILIO_ACCOUNT_SID, OTP_TWILIO_AUTH_TOKEN, OTP_TWILIO_FROM_NUMBER
  */
 
+import twilio from 'twilio';
+
 export interface OtpProvider {
   /**
    * Send OTP to phone number
@@ -75,17 +77,12 @@ class TwilioOtpProvider implements OtpProvider {
 
   async send(phone: string, otpCode: string): Promise<boolean> {
     try {
-      // In production, this would use the actual Twilio SDK:
-      // const twilio = require('twilio');
-      // const client = twilio(this.accountSid, this.authToken);
-      // await client.messages.create({
-      //   body: `Your OTP is: ${otpCode}`,
-      //   from: this.fromNumber,
-      //   to: phone
-      // });
-      
-      // For now, log that we would send via Twilio
-      console.log(`[TWILIO OTP] Would send to ${phone}: ${otpCode}`);
+      const client = twilio(this.accountSid, this.authToken);
+      await client.messages.create({
+        body: `Your BookMyNai verification code is ${otpCode}. It expires soon.`,
+        from: this.fromNumber,
+        to: phone,
+      });
       return true;
     } catch (error) {
       console.error('Failed to send OTP via Twilio:', error);
@@ -106,23 +103,21 @@ function getOtpProvider(): OtpProvider {
   const nodeEnv = process.env.NODE_ENV || 'development';
 
   // Explicit provider configuration
+  if (nodeEnv === 'production' && provider !== 'twilio') {
+    throw new Error('OTP_PROVIDER_NOT_CONFIGURED: production requires OTP_PROVIDER=twilio');
+  }
+
   if (provider === 'twilio') {
     return new TwilioOtpProvider();
-  } else if (provider === 'mock') {
+  } else if (provider === 'mock' && nodeEnv !== 'production') {
     return new MockOtpProvider();
-  } else if (provider === 'development') {
+  } else if (provider === 'development' && nodeEnv !== 'production') {
     return new DevelopmentOtpProvider();
   }
 
   // Default behavior based on environment
   if (nodeEnv === 'production') {
-    throw new Error(
-      '🔴 CRITICAL: OTP_PROVIDER not configured for production!\n' +
-      'Set OTP_PROVIDER environment variable to one of: twilio, mock\n' +
-      'For Twilio: Also set OTP_TWILIO_ACCOUNT_SID, OTP_TWILIO_AUTH_TOKEN, OTP_TWILIO_FROM_NUMBER\n' +
-      'For mock/testing: Set OTP_PROVIDER=mock\n' +
-      'DO NOT use development mode in production!'
-    );
+    throw new Error('OTP_PROVIDER_NOT_CONFIGURED: production requires OTP_PROVIDER=twilio');
   }
 
   if (process.env.AUTH_DEV_MODE === 'true') {

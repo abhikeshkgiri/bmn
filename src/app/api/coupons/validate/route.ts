@@ -6,14 +6,24 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { validateCoupon } from '@/services/coupon.service';
+import { getCurrentUser } from '@/lib/auth';
+import { isRateLimited } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return NextResponse.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } }, { status: 401 });
+    }
+    if (isRateLimited(`coupon:${currentUser._id}`, 30, 10 * 60 * 1000)) {
+      return NextResponse.json({ success: false, error: { code: 'RATE_LIMITED', message: 'Too many coupon attempts' } }, { status: 429 });
+    }
+
     const body = await request.json();
-    const { couponCode, salonId, serviceId, customerId, subtotal } = body;
+    const { couponCode, salonId, serviceId, subtotal } = body;
 
     // Validate required fields
-    if (!couponCode || !salonId || !serviceId || !customerId || subtotal === undefined) {
+    if (!couponCode || !salonId || !serviceId || subtotal === undefined) {
       return NextResponse.json(
         {
           success: false,
@@ -39,7 +49,7 @@ export async function POST(request: NextRequest) {
       couponCode: couponCode.trim(),
       salonId,
       serviceId,
-      customerId,
+      customerId: currentUser._id,
       subtotal: Math.floor(subtotal), // Convert to paise if needed
     });
 

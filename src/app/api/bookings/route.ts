@@ -11,6 +11,7 @@ import {
   getCustomerBookings,
 } from '@/services/booking.service';
 import { ZodError } from 'zod';
+import { isRateLimited } from '@/lib/rate-limit';
 
 /**
  * POST /api/bookings
@@ -31,6 +32,10 @@ export async function POST(request: NextRequest) {
         },
         { status: 401 }
       );
+    }
+
+    if (isRateLimited(`booking:${currentUser._id}`, 10, 10 * 60 * 1000)) {
+      return NextResponse.json({ success: false, error: { code: 'RATE_LIMITED', message: 'Too many booking attempts' } }, { status: 429 });
     }
 
     // Parse and validate request body

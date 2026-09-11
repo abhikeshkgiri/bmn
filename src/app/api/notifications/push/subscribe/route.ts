@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
       endpoint,
       auth,
       p256dh,
-      userAgent: userAgent || navigator?.userAgent,
+      userAgent: userAgent || request.headers.get('user-agent') || undefined,
     });
 
     return NextResponse.json(

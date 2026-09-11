@@ -6,6 +6,7 @@
 
 import Payment, { type IPayment } from '@/models/Payment';
 import Booking, { type IBooking } from '@/models/Booking';
+import WebhookEvent from '@/models/WebhookEvent';
 import { connectDB } from '@/lib/db';
 import { getRazorpayClient, verifyPaymentSignature } from '@/lib/razorpay';
 import type { AuthUser } from '@/types';
@@ -14,6 +15,8 @@ import {
   notifyPaymentFailed,
   notifyPaymentSuccess,
 } from '@/services/notification.service';
+import { recordAuditEvent } from '@/services/audit.service';
+import mongoose from 'mongoose';
 
 /**
  * Payment error codes and messages
@@ -112,7 +115,7 @@ export async function createRazorpayOrder(
   }
 
   // Verify booking is not cancelled
-  if (booking.status === BOOKING_STATUS.CANCELLED) {
+  if (booking.status === BOOKING_STATUS.CANCELLED || (booking.holdExpiresAt && booking.holdExpiresAt <= new Date())) {
     throw PAYMENT_ERRORS.BOOKING_CANCELLED;
   }
 
@@ -210,7 +213,6 @@ export async function verifyRazorpayPayment(
     throw PAYMENT_ERRORS.FORBIDDEN;
   }
 
-  // Fetch payment record
   const payment = (await Payment.findOne({
     booking: bookingId,
     providerOrderId: orderId,
@@ -228,9 +230,10 @@ export async function verifyRazorpayPayment(
   // Verify Razorpay signature
   const isSignatureValid = verifyPaymentSignature(orderId, paymentId, signature);
   if (!isSignatureValid) {
-    // Mark payment as failed
-    payment.status = PAYMENT_STATUS.FAILED;
-    await payment.save();
+    await Payment.updateOne(
+      { _id: payment._id, status: { $ne: PAYMENT_STATUS.PAID } },
+      { $set: { status: PAYMENT_STATUS.FAILED } },
+    );
     throw PAYMENT_ERRORS.INVALID_SIGNATURE;
   }
 
@@ -239,24 +242,68 @@ export async function verifyRazorpayPayment(
     throw PAYMENT_ERRORS.AMOUNT_MISMATCH;
   }
 
-  // Update payment record
-  payment.providerPaymentId = paymentId;
-  payment.providerSignature = signature;
-  payment.status = PAYMENT_STATUS.PAID;
-  await payment.save();
+  const session = await mongoose.startSession();
+  let verifiedPayment: IPayment | null = null;
+  try {
+    await session.withTransaction(async () => {
+      const currentBooking = await Booking.findOne({
+        _id: bookingId,
+        status: { $ne: BOOKING_STATUS.CANCELLED },
+      }).session(session);
 
-  // Update booking status to CONFIRMED and paymentStatus to PAID
-  await Booking.updateOne(
-    { _id: bookingId },
-    {
-      paymentStatus: PAYMENT_STATUS.PAID,
-      status: BOOKING_STATUS.CONFIRMED,
-    }
-  );
+      if (!currentBooking) {
+        throw PAYMENT_ERRORS.BOOKING_CANCELLED;
+      }
+
+      verifiedPayment = await Payment.findOneAndUpdate(
+        { _id: payment._id, status: { $ne: PAYMENT_STATUS.PAID } },
+        {
+          $set: {
+            providerPaymentId: paymentId,
+            providerSignature: signature,
+            status: PAYMENT_STATUS.PAID,
+          },
+        },
+        { new: true, session },
+      ) as IPayment | null;
+
+      if (!verifiedPayment) {
+        verifiedPayment = await Payment.findById(payment._id).session(session) as IPayment | null;
+        return;
+      }
+
+      await Booking.updateOne(
+        { _id: bookingId, paymentStatus: { $ne: PAYMENT_STATUS.PAID } },
+        {
+          $set: {
+            paymentStatus: PAYMENT_STATUS.PAID,
+            status: BOOKING_STATUS.CONFIRMED,
+            holdExpiresAt: null,
+          },
+        },
+        { session },
+      );
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  if (!verifiedPayment) {
+    throw PAYMENT_ERRORS.INVALID_PAYMENT;
+  }
+
+  const paymentToReturn = verifiedPayment as IPayment;
 
   await notifyPaymentSuccess(bookingId);
+  await recordAuditEvent({
+    actor: currentUser,
+    action: 'PAYMENT_VERIFIED',
+    entityType: 'Payment',
+    entityId: paymentToReturn._id.toString(),
+    metadata: { bookingId },
+  });
 
-  return payment;
+  return paymentToReturn;
 }
 
 /**
@@ -286,6 +333,10 @@ export async function recordPaymentFailure(
       };
     }
     await payment.save();
+    await Booking.updateOne(
+      { _id: bookingId, paymentStatus: { $ne: PAYMENT_STATUS.PAID } },
+      { $set: { paymentStatus: PAYMENT_STATUS.FAILED } },
+    );
     await notifyPaymentFailed(bookingId, errorDescription || 'Payment failed');
   }
 }
@@ -355,7 +406,8 @@ export async function getPaymentById(
 export async function processRefund(
   paymentId: string,
   refundAmount?: number,
-  reason?: string
+  reason?: string,
+  actor?: AuthUser,
 ): Promise<IPayment> {
   await connectDB();
 
@@ -405,6 +457,13 @@ export async function processRefund(
   }
 
   await payment.save();
+  await recordAuditEvent({
+    actor,
+    action: 'PAYMENT_REFUNDED',
+    entityType: 'Payment',
+    entityId: payment._id.toString(),
+    metadata: { amount: amountToRefund, reason: reason || 'Customer requested refund' },
+  });
 
   return payment;
 }
@@ -415,11 +474,27 @@ export async function processRefund(
  */
 export async function handleWebhookEvent(
   event: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  eventId: string,
 ): Promise<void> {
   await connectDB();
 
-  switch (event) {
+  const existingEvent = await WebhookEvent.findOne({ eventId });
+  if (existingEvent?.status === 'PROCESSED' || existingEvent?.status === 'PROCESSING') {
+    return;
+  }
+
+  if (existingEvent) {
+    existingEvent.status = 'PROCESSING';
+    existingEvent.attempts += 1;
+    existingEvent.lastError = undefined;
+    await existingEvent.save();
+  } else {
+    await WebhookEvent.create({ eventId, event, status: 'PROCESSING', attempts: 1 });
+  }
+
+  try {
+    switch (event) {
     case 'payment.captured': {
       // Payment captured successfully
       const paymentData = data.payment as Record<string, string> | undefined;
@@ -427,13 +502,20 @@ export async function handleWebhookEvent(
       const orderId = paymentData?.order_id;
 
       if (paymentId && orderId) {
-        await Payment.updateOne(
+        const payment = await Payment.findOneAndUpdate(
           { providerOrderId: orderId },
           {
             providerPaymentId: paymentId,
             status: PAYMENT_STATUS.PAID,
-          }
+          },
+          { new: true },
         );
+        if (payment) {
+          await Booking.updateOne(
+            { _id: payment.booking, paymentStatus: { $ne: PAYMENT_STATUS.PAID } },
+            { $set: { paymentStatus: PAYMENT_STATUS.PAID, status: BOOKING_STATUS.CONFIRMED, holdExpiresAt: null } },
+          );
+        }
       }
       break;
     }
@@ -465,10 +547,8 @@ export async function handleWebhookEvent(
         await Payment.updateOne(
           { providerPaymentId: paymentId },
           {
-            $set: {
-              refundAmount: refundAmount,
-              status: PAYMENT_STATUS.PARTIALLY_REFUNDED,
-            },
+            $inc: { refundAmount },
+            $set: { status: PAYMENT_STATUS.PARTIALLY_REFUNDED },
           }
         );
       }
@@ -494,5 +574,13 @@ export async function handleWebhookEvent(
       }
       break;
     }
+    }
+    await WebhookEvent.updateOne({ eventId }, { $set: { status: 'PROCESSED', processedAt: new Date() } });
+  } catch (error) {
+    await WebhookEvent.updateOne(
+      { eventId },
+      { $set: { status: 'FAILED', lastError: error instanceof Error ? error.message : 'Webhook processing failed' } },
+    );
+    throw error;
   }
 }

@@ -12,8 +12,7 @@ const API_CACHE = `bookmynai-api-${CACHE_VERSION}`;
 // Static assets to cache on install
 const STATIC_ASSETS = [
   '/',
-  '/icons/icon-192x192.png',
-  '/icons/icon-512x512.png',
+  '/icons/icon.svg',
   '/manifest.json',
 ];
 
@@ -154,8 +153,8 @@ self.addEventListener('push', (event: PushEvent) => {
     const data = event.data.json();
     const options = {
       body: data.body || 'BookMyNai notification',
-      icon: data.icon || '/icons/icon-192x192.png',
-      badge: data.badge || '/icons/icon-192x192.png',
+      icon: data.icon || '/icons/icon.svg',
+      badge: data.badge || '/icons/icon.svg',
       tag: data.tag || 'notification',
       requireInteraction: data.requireInteraction || false,
       data: data.data || {},

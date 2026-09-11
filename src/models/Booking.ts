@@ -25,6 +25,7 @@ interface IBooking extends Document {
   totalAmount: number; // in paise
   status: BookingStatus;
   paymentStatus: PaymentStatus;
+  holdExpiresAt?: Date;
   bookingType: BookingType;
   customerNotes?: string;
   cancellationReason?: string;
@@ -115,6 +116,11 @@ const BookingSchema = new Schema<IBooking>(
       default: PAYMENT_STATUS.PENDING,
       index: true,
     },
+    holdExpiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     bookingType: {
       type: String,
       enum: Object.values(BOOKING_TYPE),
@@ -139,6 +145,7 @@ BookingSchema.index({ salon: 1, appointmentDate: 1, status: 1 });
 BookingSchema.index({ barber: 1, appointmentDate: 1, status: 1 });
 // For fetching customer bookings
 BookingSchema.index({ customer: 1, appointmentDate: 1 });
+BookingSchema.index({ salon: 1, appointmentDate: 1, holdExpiresAt: 1 });
 
 // Prevent OverwriteModelError
 const Booking = mongoose.models.Booking || mongoose.model<IBooking>('Booking', BookingSchema);

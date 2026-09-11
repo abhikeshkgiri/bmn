@@ -47,7 +47,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       try {
         const payment = await getPaymentByBooking(id, currentUser);
         if (payment && payment.status === PAYMENT_STATUS.PAID) {
-          await processRefund(payment._id.toString(), payment.amount, 'Booking cancelled by customer');
+          await processRefund(payment._id.toString(), payment.amount, 'Booking cancelled by customer', currentUser);
         }
       } catch (refundError) {
         console.error('Refund processing failed:', refundError);

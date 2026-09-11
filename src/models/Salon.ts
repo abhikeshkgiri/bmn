@@ -49,6 +49,7 @@ interface ISalon extends Document {
   openingHours: IOpeningHours;
   capacity: number; // Maximum simultaneous bookings/appointments
   slotIntervalMinutes: number; // Booking slot interval (15, 30, 60 minutes)
+  bookingLockVersion: number;
   facilities: SalonFacility[];
   rating: number;
   reviewCount: number;
@@ -264,6 +265,10 @@ const SalonSchema = new Schema<ISalon>(
       type: Number,
       default: 30,
       enum: [15, 30, 45, 60],
+    },
+    bookingLockVersion: {
+      type: Number,
+      default: 0,
     },
     facilities: {
       type: [String],
