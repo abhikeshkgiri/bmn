@@ -18,6 +18,7 @@
     "seed:demo": "node -e \"process.env.TS_NODE_PROJECT='tsconfig.scripts.json'; require('ts-node/register/transpile-only'); require('tsconfig-paths/register'); require('./scripts/seed-demo.ts')\"",
     "seed:demo:reset": "node -e \"process.env.TS_NODE_PROJECT='tsconfig.scripts.json'; require('ts-node/register/transpile-only'); require('tsconfig-paths/register'); require('./scripts/seed-demo.ts')\" --reset"
   },
+ 
   "dependencies": {
     "@hookform/resolvers": "^5.8.0",
     "bcryptjs": "^3.0.3",

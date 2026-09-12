@@ -9,7 +9,8 @@ import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
 import { useCurrentLocation } from '@/hooks/useCurrentLocation';
 import { formatDistance, calculateDistance } from '@/utils/distance';
-import { MapPin, Phone, Mail, Globe, Star, Check, Navigation } from 'lucide-react';
+import { formatCurrency } from '@/utils/currency';
+import { MapPin, Phone, Mail, Globe, Star, Check, Navigation, Clock, UserRound } from 'lucide-react';
 import { FavoriteButton } from '@/components/customer/FavoriteButton';
 
 interface Salon {
@@ -56,6 +57,39 @@ interface Salon {
   };
 }
 
+interface Service {
+  _id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  duration: number;
+  price: number;
+  discountPrice?: number;
+  image?: string;
+  isActive?: boolean;
+}
+
+interface Barber {
+  _id: string;
+  name: string;
+  slug?: string;
+  profileImage?: string;
+  bio?: string;
+  rating?: number;
+  reviewCount?: number;
+  isAvailable?: boolean;
+  isVerified?: boolean;
+  isActive?: boolean;
+  specializations?: string[];
+  services?: Array<{ _id: string; name: string; duration?: number; price?: number }>;
+}
+
+interface AvailabilitySlot {
+  startTime: string;
+  endTime: string;
+  available: boolean;
+}
+
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -68,6 +102,13 @@ export default function SalonDetailPage() {
   const [salon, setSalon] = useState<Salon | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [services, setServices] = useState<Service[]>([]);
+  const [barbers, setBarbers] = useState<Barber[]>([]);
+  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
+  const [selectedBarberId, setSelectedBarberId] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [availabilitySlots, setAvailabilitySlots] = useState<AvailabilitySlot[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
 
   // Calculate distance as derived state using useMemo
   const distance = useMemo(() => {
@@ -91,6 +132,29 @@ export default function SalonDetailPage() {
           const foundSalon = listData.data.find((s: Salon) => s.slug === slug.toLowerCase());
           if (foundSalon) {
             setSalon(foundSalon);
+
+            try {
+              const serviceResponse = await fetch(`/api/services?salonId=${foundSalon._id}&isActive=true&limit=50`);
+              const servicePayload = await serviceResponse.json();
+              if (servicePayload.success) {
+                setServices(servicePayload.data || []);
+                if ((servicePayload.data || []).length > 0) {
+                  setSelectedServiceId(servicePayload.data[0]._id);
+                }
+              }
+
+              const barberResponse = await fetch(`/api/barbers?salonId=${foundSalon._id}&isActive=true&limit=50`);
+              const barberPayload = await barberResponse.json();
+              if (barberPayload.success) {
+                setBarbers(barberPayload.data || []);
+                if ((barberPayload.data || []).length > 0) {
+                  setSelectedBarberId(barberPayload.data[0]._id);
+                }
+              }
+            } catch (fetchError) {
+              console.error('Failed to fetch service or barber catalog:', fetchError);
+            }
+
             if (new URLSearchParams(window.location.search).get('book') === '1') {
               router.replace(`/book/${foundSalon.slug}`);
               return;
@@ -112,6 +176,41 @@ export default function SalonDetailPage() {
       fetchSalon();
     }
   }, [router, slug]);
+
+  useEffect(() => {
+    const fetchAvailability = async () => {
+      if (!salon || !selectedServiceId || !selectedBarberId || !selectedDate) {
+        setAvailabilitySlots([]);
+        return;
+      }
+
+      try {
+        setAvailabilityLoading(true);
+        const response = await fetch(
+          `/api/bookings/availability?salonId=${salon._id}&barberId=${selectedBarberId}&serviceId=${selectedServiceId}&date=${selectedDate}`
+        );
+        const result = await response.json();
+        if (result?.success && Array.isArray(result.data?.slots)) {
+          setAvailabilitySlots(result.data.slots.filter((slot: AvailabilitySlot) => slot.available));
+        } else {
+          setAvailabilitySlots([]);
+        }
+      } catch (err) {
+        console.error('Failed to fetch booked availability:', err);
+        setAvailabilitySlots([]);
+      } finally {
+        setAvailabilityLoading(false);
+      }
+    };
+
+    fetchAvailability();
+  }, [salon, selectedBarberId, selectedDate, selectedServiceId]);
+
+  const selectedService = services.find((service) => service._id === selectedServiceId) || services[0] || null;
+  const qualifiedBarbers = barbers.filter((barber) => {
+    if (!selectedServiceId) return true;
+    return !barber.services || barber.services.some((service) => service._id === selectedServiceId);
+  });
 
   if (loading) {
     return (
@@ -142,14 +241,15 @@ export default function SalonDetailPage() {
   return (
     <div className="min-h-screen bg-white">
       {/* Cover Image */}
-      {salon.coverImage && (
+      {(salon.coverImage || salon.logo || '/salon-placeholder.svg') && (
         <div className="h-96 bg-gray-200 overflow-hidden">
           <img
-            src={salon.coverImage}
+            src={salon.coverImage || salon.logo || '/salon-placeholder.svg'}
             alt={salon.name}
             className="w-full h-full object-cover"
             onError={(e) => {
-              e.currentTarget.style.display = 'none';
+              e.currentTarget.onerror = null;
+              e.currentTarget.src = '/salon-placeholder.svg';
             }}
           />
         </div>
@@ -160,16 +260,17 @@ export default function SalonDetailPage() {
         {/* Header */}
         <div className="flex flex-col md:flex-row gap-6 mb-12">
           {/* Logo */}
-          {salon.logo && (
-            <div className="md:w-48 h-48 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
-              <img
-                src={salon.logo}
-                alt={salon.name}
-                className="w-full h-full object-cover"                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                }}              />
-            </div>
-          )}
+          <div className="md:w-48 h-48 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
+            <img
+              src={salon.logo || salon.coverImage || '/salon-placeholder.svg'}
+              alt={salon.name}
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = '/salon-placeholder.svg';
+              }}
+            />
+          </div>
 
           {/* Info */}
           <div className="flex-1">
@@ -177,11 +278,15 @@ export default function SalonDetailPage() {
               <div>
                 <h1 className="text-4xl font-bold text-foreground mb-2">{salon.name}</h1>
                 <div className="flex items-center gap-3">
-                  <div className="flex items-center text-yellow-500">
-                    <Star size={20} fill="currentColor" />
-                    <span className="ml-1 text-lg font-semibold">{salon.rating}</span>
-                  </div>
-                  <span className="text-foreground-secondary">({salon.reviewCount} reviews)</span>
+                  {salon.rating > 0 && (
+                    <div className="flex items-center text-yellow-500">
+                      <Star size={20} fill="currentColor" />
+                      <span className="ml-1 text-lg font-semibold">{salon.rating}</span>
+                    </div>
+                  )}
+                  {salon.reviewCount > 0 && (
+                    <span className="text-foreground-secondary">({salon.reviewCount} reviews)</span>
+                  )}
                   {salon.isVerified && (
                     <Badge variant="success">
                       <Check size={16} className="mr-1" />
@@ -310,6 +415,122 @@ export default function SalonDetailPage() {
             </Card>
 
             {/* Facilities */}
+            <Card className="p-6">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-2xl font-bold text-foreground mb-1">Services & Barbers</h2>
+                  <p className="text-sm text-foreground-secondary">Service prices, duration, matching barbers, and live availability</p>
+                </div>
+                <Button variant="primary" size="sm" onClick={() => router.push(`/book/${salon.slug}`)}>
+                  Continue booking
+                </Button>
+              </div>
+
+              <div className="grid gap-4 mt-4">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Clock size={16} className="text-brand-pink" />
+                    <span className="font-semibold text-foreground">Services</span>
+                  </div>
+                  <div className="grid gap-2">
+                    {services.length === 0 && (
+                      <p className="text-sm text-foreground-secondary">No services are currently published.</p>
+                    )}
+                    {services.map((service) => (
+                      <button
+                        key={service._id}
+                        type="button"
+                        onClick={() => setSelectedServiceId(service._id)}
+                        className={`w-full flex items-center justify-between gap-4 rounded-xl border px-4 py-3 text-left transition ${selectedServiceId === service._id ? 'border-brand-pink bg-brand-pink/5' : 'border-border hover:bg-muted'}`}
+                      >
+                        <span>
+                          <span className="block font-semibold text-foreground">{service.name}</span>
+                          <span className="block text-xs text-foreground-secondary">
+                            {service.duration} min · {service.category || 'Salon service'}
+                          </span>
+                        </span>
+                        <span className="font-semibold text-foreground">
+                          {service.discountPrice ? formatCurrency(service.discountPrice) : formatCurrency(service.price)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <UserRound size={16} className="text-brand-pink" />
+                    <span className="font-semibold text-foreground">Barbers</span>
+                  </div>
+                  <div className="grid gap-2">
+                    {qualifiedBarbers.length === 0 && (
+                      <p className="text-sm text-foreground-secondary">No active barbers are offering this service.</p>
+                    )}
+                    {qualifiedBarbers.map((barber) => (
+                      <button
+                        key={barber._id}
+                        type="button"
+                        onClick={() => setSelectedBarberId(barber._id)}
+                        className={`w-full flex items-center justify-between gap-4 rounded-xl border px-4 py-3 text-left transition ${selectedBarberId === barber._id ? 'border-brand-pink bg-brand-pink/5' : 'border-border hover:bg-muted'}`}
+                      >
+                        <span className="flex items-center gap-3">
+                          <span className="h-10 w-10 rounded-full bg-cover bg-center border border-border" style={{ backgroundImage: `url(${barber.profileImage || '/salon-placeholder.svg'})` }} />
+                          <span>
+                            <span className="block font-semibold text-foreground">{barber.name}</span>
+                            <span className="block text-xs text-foreground-secondary">
+                              {barber.specializations?.length ? barber.specializations.join(' · ') : 'Salon expert'}
+                            </span>
+                          </span>
+                        </span>
+                        <span className="text-xs text-foreground-secondary">
+                          {barber.rating ? `${barber.rating} ★` : 'Profile'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border p-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="font-semibold text-foreground">Availability</span>
+                    <input
+                      type="date"
+                      value={selectedDate}
+                      min={new Date().toISOString().slice(0, 10)}
+                      onChange={(event) => setSelectedDate(event.target.value)}
+                      className="rounded-lg border border-border px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div className="mt-3">
+                    {availabilityLoading && <Spinner size="sm" />}
+                    {!availabilityLoading && availabilitySlots.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {availabilitySlots.map((slot, index) => (
+                          <span key={`${slot.startTime}-${index}`} className="rounded-full border border-brand-pink px-3 py-1 text-xs font-medium text-brand-pink">
+                            {slot.startTime} - {slot.endTime}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {!availabilityLoading && availabilitySlots.length === 0 && (
+                      <span className="text-sm text-foreground-secondary">No available slots returned for this service and barber.</span>
+                    )}
+                  </div>
+                </div>
+
+                {selectedService && (
+                  <div className="rounded-xl bg-muted px-4 py-3">
+                    <span className="text-sm text-foreground-secondary">Selected service</span>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-semibold text-foreground">{selectedService.name}</span>
+                      <span className="font-semibold text-brand-pink">{formatCurrency(selectedService.price)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
+
             {salon.facilities.length > 0 && (
               <Card className="p-6">
                 <h2 className="text-2xl font-bold text-foreground mb-4">Facilities</h2>

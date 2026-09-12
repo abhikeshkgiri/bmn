@@ -128,6 +128,7 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
     const city = searchParams.get('city') || undefined;
+    const area = searchParams.get('area') || undefined;
     const state = searchParams.get('state') || undefined;
     const isVerified = searchParams.get('isVerified') ? searchParams.get('isVerified') === 'true' : undefined;
     const search = searchParams.get('search') || undefined;
@@ -165,6 +166,7 @@ export async function GET(request: NextRequest) {
       page,
       limit,
       city,
+      area,
       state,
       isVerified,
       search,

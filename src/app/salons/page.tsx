@@ -15,7 +15,10 @@ import { formatDistance } from '@/utils/distance';
 interface Salon extends MapSalon {
   description?: string;
   logo?: string;
+  coverImage?: string;
+  images?: string[];
   isVerified: boolean;
+  isActive: boolean;
   reviewCount: number;
 }
 
@@ -37,6 +40,7 @@ export default function SalonsPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [city, setCity] = useState('');
+  const [area, setArea] = useState('');
   const [sortBy, setSortBy] = useState('newest');
   const [showMap, setShowMap] = useState(false);
   const [locationCenter, setLocationCenter] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -69,6 +73,7 @@ export default function SalonsPage() {
         setUseLocationSearch(false);
         if (searchTerm) params.search = searchTerm;
         if (city) params.city = city;
+        if (area) params.area = area;
         if (sortBy) params.sortBy = sortBy;
       }
 
@@ -96,10 +101,16 @@ export default function SalonsPage() {
     };
     loadSalons();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTerm, city, sortBy]);
+  }, [searchTerm, city, area, sortBy]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    fetchSalons(1);
+  };
+
+  const handleCityAreaSearch = (cityValue: string, areaValue: string) => {
+    setCity(cityValue);
+    setArea(areaValue);
     fetchSalons(1);
   };
 
@@ -123,7 +134,7 @@ export default function SalonsPage() {
       <div className="max-w-7xl mx-auto px-4 py-8">
         {/* Location Search Section */}
         <div className="mb-8">
-          <LocationSearch onSearch={handleLocationSearch} loading={loading} />
+          <LocationSearch onSearch={handleLocationSearch} onCityAreaSearch={handleCityAreaSearch} loading={loading} />
         </div>
 
         {/* Location-based Discovery Results */}
@@ -160,7 +171,7 @@ export default function SalonsPage() {
         )}
         {/* Traditional Search and Filters */}
         {!useLocationSearch && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
             {/* Search */}
             <div className="md:col-span-2">
               <form onSubmit={handleSearch} className="relative">
@@ -187,6 +198,17 @@ export default function SalonsPage() {
                 <option value="Bengaluru">Bengaluru</option>
                 <option value="Kolkata">Kolkata</option>
               </select>
+            </div>
+
+            {/* Area / locality filter */}
+            <div>
+              <Input
+                type="text"
+                placeholder="Area / locality"
+                value={area}
+                onChange={(e) => setArea(e.target.value)}
+                aria-label="Filter salons by area or locality"
+              />
             </div>
 
             {/* Sort */}
@@ -221,15 +243,18 @@ export default function SalonsPage() {
                 <Link key={salon._id} href={`/salons/${salon.slug}`}>
                   <Card className="hover:shadow-lg transition-shadow cursor-pointer h-full">
                     {/* Salon Image */}
-                    {salon.logo && (
-                      <div className="h-48 bg-gray-100 overflow-hidden rounded-t-lg">
-                        <img
-                          src={salon.logo}
-                          alt={salon.name}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    )}
+                    <div className="h-48 bg-gray-100 overflow-hidden rounded-t-lg">
+                      <img
+                        src={salon.logo || salon.coverImage || '/salon-placeholder.svg'}
+                        alt={salon.name}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = '/salon-placeholder.svg';
+                        }}
+                      />
+                    </div>
 
                     <div className="p-4">
                       {/* Name and Verified */}
@@ -244,16 +269,20 @@ export default function SalonsPage() {
                         )}
                       </div>
 
-                      {/* Rating */}
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="flex items-center text-yellow-500">
-                          <Star size={16} fill="currentColor" />
-                          <span className="ml-1 font-semibold">{salon.rating}</span>
+                      {/* Rating / reviews shown only when the model already has real ratings and review counts */}
+                      {salon.rating > 0 && (
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="flex items-center text-yellow-500">
+                            <Star size={16} fill="currentColor" />
+                            <span className="ml-1 font-semibold">{salon.rating}</span>
+                          </div>
+                          {salon.reviewCount > 0 && (
+                            <span className="text-sm text-foreground-secondary">
+                              ({salon.reviewCount} reviews)
+                            </span>
+                          )}
                         </div>
-                        <span className="text-sm text-foreground-secondary">
-                          ({salon.reviewCount} reviews)
-                        </span>
-                      </div>
+                      )}
 
                       {/* Description */}
                       {salon.description && (
@@ -267,8 +296,8 @@ export default function SalonsPage() {
                         <div className="flex items-center gap-2 text-foreground-secondary">
                           <MapPin size={16} />
                           <span>
-                            {salon.address.area && `${salon.address.area}, `}
-                            {salon.address.city}
+                            {salon.address.area ? `${salon.address.area}, ` : ''}
+                            {salon.address.city || 'City unavailable'}
                           </span>
                         </div>
                         {useLocationSearch && salon.distance && (

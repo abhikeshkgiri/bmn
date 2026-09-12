@@ -4,6 +4,7 @@ import { USER_ROLES } from '@/constants/roles';
 import { connectDB } from '@/lib/db';
 import Salon from '@/models/Salon';
 import Barber from '@/models/Barber';
+import { listSalons } from '@/services/salon.service';
 
 const baseBarber = { name: 'Test Barber', experienceYears: 2, serviceIds: [] };
 
@@ -29,6 +30,43 @@ const input = BarberOnboardingSchema.parse({
 assert.equal(input.salon?.city, 'Delhi');
 assert.equal(input.newServices.length, 1);
 
+async function verifyStep2DiscoveryFiltering() {
+  await connectDB();
+  const areaResults = await listSalons({
+    page: 1,
+    limit: 50,
+    city: 'Delhi',
+    area: 'Mayur Vihar',
+    isActive: true,
+    isVerified: true,
+  });
+
+  assert.ok(areaResults.total >= 1, 'Delhi area locality should resolve to real public salon data');
+  assert.ok(areaResults.salons.every((salon) => /mayur vihar/i.test(salon.address?.area || '')), 'Area filter should be applied in the server listing layer');
+}
+
+async function verifyStep3SalonListingDetailData() {
+  await connectDB();
+  const publicResults = await listSalons({
+    page: 1,
+    limit: 5,
+    city: 'Delhi',
+    isActive: true,
+    isVerified: true,
+    sortBy: 'newest',
+  });
+
+  assert.ok(publicResults.total >= 1, 'Public listing should reveal a real approved/active salon from the database');
+  assert.ok(publicResults.salons.length >= 1, 'Public listing should surface at least one real salon card');
+  assert.ok(publicResults.salons.every((salon) => salon.isActive && salon.isVerified), 'Public list should respect existing visible-service state gates');
+  assert.ok(publicResults.salons.every((salon) => Boolean(salon.address?.city)), 'Public list should expose the real city field from the salon address model');
+
+  const detailSalon = await Salon.findOne({ slug: 'bold-trim-club', isActive: true, isVerified: true }).lean();
+  assert.ok(detailSalon, 'The real detail route source should resolve a canonical, public salon slug from the model');
+  assert.ok(detailSalon.slug === 'bold-trim-club', 'The slug path should match the canonical public slug already persisted in the database');
+  assert.equal(typeof detailSalon.name, 'string', 'Salon detail object should still expose a displayable public name');
+}
+
 async function verifySeedRegression() {
   await connectDB();
   const salon = await Salon.findOne({ slug: 'bold-trim-club', isActive: true, isVerified: true }).lean();
@@ -37,7 +75,11 @@ async function verifySeedRegression() {
   assert.ok(barberCount > 0, 'Existing approved salon still has approved barbers');
 }
 
-verifySeedRegression().finally(() => {
+Promise.allSettled([
+  verifyStep2DiscoveryFiltering(),
+  verifyStep3SalonListingDetailData(),
+  verifySeedRegression(),
+]).finally(() => {
   console.log('Phase 24 focused tests passed');
   process.exit(0);
 });

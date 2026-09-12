@@ -312,6 +312,7 @@ export async function listSalons(options: {
   page?: number;
   limit?: number;
   city?: string;
+  area?: string;
   state?: string;
   isVerified?: boolean;
   isActive?: boolean;
@@ -329,6 +330,9 @@ export async function listSalons(options: {
   // Filters
   if (options.city) {
     query['address.city'] = new RegExp(options.city, 'i');
+  }
+  if (options.area) {
+    query['address.area'] = new RegExp(options.area, 'i');
   }
   if (options.state) {
     query['address.state'] = new RegExp(options.state, 'i');
