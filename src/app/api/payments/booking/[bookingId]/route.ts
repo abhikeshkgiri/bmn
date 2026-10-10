@@ -74,7 +74,7 @@ export async function GET(
           refundAmount: payment.refundAmount || 0,
           createdAt: payment.createdAt,
           updatedAt: payment.updatedAt,
-          paidAt: payment.status === 'PAID' ? payment.updatedAt : null,
+          paidAt: payment.paidAt ?? null,
           // Do NOT expose sensitive data:
           // providerOrderId, providerPaymentId, providerSignature, metadata
         },

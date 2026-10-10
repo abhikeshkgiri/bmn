@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSalonReviews } from '@/services/review.service';
+import { ReviewIdSchema, ReviewListQuerySchema } from '@/validations/review.schema';
 
 export async function GET(
   request: NextRequest,
@@ -13,21 +14,23 @@ export async function GET(
   try {
     const { id: salonId } = await params;
     const { searchParams } = new URL(request.url);
+    const parsedId = ReviewIdSchema.safeParse(salonId);
+    const parsedQuery = ReviewListQuerySchema.safeParse({
+      page: searchParams.get('page') ?? undefined,
+      limit: searchParams.get('limit') ?? undefined,
+    });
 
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '10', 10);
-
-    if (page < 1 || limit < 1 || limit > 50) {
+    if (!parsedId.success || !parsedQuery.success) {
       return NextResponse.json(
         {
           success: false,
-          error: { code: 'INVALID_PAGINATION', message: 'Invalid pagination parameters' },
+          error: { code: 'INVALID_REQUEST', message: 'Salon ID or pagination parameters are invalid' },
         },
         { status: 400 }
       );
     }
 
-    const result = await getSalonReviews(salonId, { page, limit });
+    const result = await getSalonReviews(salonId, parsedQuery.data);
 
     return NextResponse.json(
       {
@@ -41,6 +44,13 @@ export async function GET(
       { status: 200 }
     );
   } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error &&
+      (error as { code: unknown }).code === 'REVIEW_NOT_FOUND') {
+      return NextResponse.json(
+        { success: false, error: { code: 'NOT_FOUND', message: 'Salon reviews are not available' } },
+        { status: 404 }
+      );
+    }
     console.error('Error fetching salon reviews:', error);
     return NextResponse.json(
       { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to fetch reviews' } },

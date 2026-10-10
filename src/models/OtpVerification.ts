@@ -7,6 +7,7 @@ interface IOtpVerification extends Document {
   expiresAt: Date;
   attempts: number;
   verified: boolean;
+  signupRole?: 'CUSTOMER' | 'SALON_OWNER';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,6 +39,11 @@ const OtpVerificationSchema = new Schema<IOtpVerification>(
       type: Boolean,
       default: false,
       index: true,
+    },
+    signupRole: {
+      type: String,
+      enum: ['CUSTOMER', 'SALON_OWNER'],
+      default: 'CUSTOMER',
     },
   },
   { timestamps: true }

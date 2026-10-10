@@ -13,7 +13,14 @@ import NotificationBell from '@/components/notifications/NotificationBell';
 import { CalendarClock, Clock3, UserCheck, ArrowRight } from 'lucide-react';
 
 interface DashboardData {
-  barber: { _id: string; name: string; salon?: { name?: string } } | null;
+  barber: {
+    _id: string;
+    name: string;
+    isActive?: boolean;
+    isVerified?: boolean;
+    services?: Array<string | { _id: string; name: string }>;
+    salon?: { name?: string; isActive?: boolean; isVerified?: boolean };
+  } | null;
   stats: {
     todayAppointments: number;
     upcomingAppointments: number;
@@ -55,6 +62,7 @@ export default function BarberDashboardRoutePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
+  const [approvalStatus, setApprovalStatus] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -71,6 +79,17 @@ export default function BarberDashboardRoutePage() {
           setLoading(false);
           return;
         }
+
+        const onboardingResponse = await fetch('/api/barber/onboarding');
+        const onboardingResult = await onboardingResponse.json();
+        if (!onboardingResponse.ok || !onboardingResult.success) {
+          throw new Error(onboardingResult?.error?.message || 'Failed to load onboarding status');
+        }
+        if (!onboardingResult.data?.complete) {
+          router.replace('/barber/onboarding');
+          return;
+        }
+        setApprovalStatus(onboardingResult.data.approval || 'PENDING_APPROVAL');
 
         const response = await fetch('/api/dashboard/barber/stats');
         const result = await response.json();
@@ -121,6 +140,15 @@ export default function BarberDashboardRoutePage() {
             <p className="text-sm uppercase tracking-wide text-brand-pink font-medium">Barber dashboard</p>
             <h1 className="text-3xl font-bold text-foreground">{data.barber?.name || 'Barber profile'}</h1>
             <p className="text-foreground-secondary">{data.barber?.salon?.name || 'Salon'}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge variant={approvalStatus === 'APPROVED' ? 'success' : 'warning'}>
+                {approvalStatus === 'APPROVED' ? 'Profile approved' : 'Profile pending review'}
+              </Badge>
+              <Badge variant={data.barber?.salon?.isActive && data.barber?.salon?.isVerified ? 'success' : 'warning'}>
+                {data.barber?.salon?.isActive && data.barber?.salon?.isVerified ? 'Salon published' : 'Salon awaiting approval'}
+              </Badge>
+              <Badge variant="info">{data.barber?.services?.length || 0} services</Badge>
+            </div>
           </div>
           <div className="flex gap-3 flex-wrap items-center">
             <NotificationBell />

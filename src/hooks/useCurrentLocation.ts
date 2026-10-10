@@ -3,6 +3,7 @@
  */
 
 import { useCallback, useState } from 'react';
+import { isValidCoordinates } from '@/utils/distance';
 
 interface LocationState {
   latitude: number | null;
@@ -41,9 +42,19 @@ export function useCurrentLocation(): UseCurrentLocationReturn {
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        const { latitude, longitude } = position.coords;
+        if (!isValidCoordinates(latitude, longitude)) {
+          setState({
+            latitude: null,
+            longitude: null,
+            error: 'Your device returned invalid location coordinates. Choose a city or area instead.',
+            loading: false,
+          });
+          return;
+        }
         setState({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
+          latitude,
+          longitude,
           error: null,
           loading: false,
         });

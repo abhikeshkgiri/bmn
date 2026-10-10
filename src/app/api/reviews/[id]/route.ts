@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { updateReview, deleteReview } from '@/services/review.service';
+import { ReviewIdSchema, ReviewUpdateSchema } from '@/validations/review.schema';
 
 export async function PATCH(
   request: NextRequest,
@@ -13,6 +14,12 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    if (!ReviewIdSchema.safeParse(id).success) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_ID', message: 'Review ID is invalid' } },
+        { status: 400 }
+      );
+    }
     const currentUser = await getCurrentUser();
 
     if (!currentUser) {
@@ -22,13 +29,26 @@ export async function PATCH(
       );
     }
 
-    const body = await request.json();
-    const { rating, review } = body;
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'Request body must be valid JSON' } },
+        { status: 400 }
+      );
+    }
+    const parsed = ReviewUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'Review data is invalid' } },
+        { status: 400 }
+      );
+    }
 
     const updatedReview = await updateReview({
       reviewId: id,
-      rating: rating !== undefined ? parseInt(rating) : undefined,
-      review: review?.trim(),
+      ...parsed.data,
       currentUser,
     });
 
@@ -52,6 +72,18 @@ export async function PATCH(
         { status: 403 }
       );
     }
+    if (err.code === 'UNAUTHORIZED') {
+      return NextResponse.json(
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Only customers can manage reviews' } },
+        { status: 403 }
+      );
+    }
+    if (err.code === 'INVALID_INPUT') {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'Review data is invalid' } },
+        { status: 400 }
+      );
+    }
 
     console.error('Error updating review:', error);
     return NextResponse.json(
@@ -67,6 +99,12 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    if (!ReviewIdSchema.safeParse(id).success) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_ID', message: 'Review ID is invalid' } },
+        { status: 400 }
+      );
+    }
     const currentUser = await getCurrentUser();
 
     if (!currentUser) {
@@ -96,6 +134,18 @@ export async function DELETE(
       return NextResponse.json(
         { success: false, error: { code: 'REVIEW_NOT_OWNED', message: 'You can only delete your own reviews' } },
         { status: 403 }
+      );
+    }
+    if (err.code === 'UNAUTHORIZED') {
+      return NextResponse.json(
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Only customers can manage reviews' } },
+        { status: 403 }
+      );
+    }
+    if (err.code === 'INVALID_INPUT') {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_ID', message: 'Review ID is invalid' } },
+        { status: 400 }
       );
     }
 

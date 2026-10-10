@@ -6,6 +6,8 @@
  * or: npm run test:db
  */
 
+require('./test-db-bootstrap.cjs');
+
 import path from 'node:path';
 import dotenv from 'dotenv';
 
@@ -18,9 +20,13 @@ import Barber from '@/models/Barber';
 import Service from '@/models/Service';
 import Booking from '@/models/Booking';
 import Payment from '@/models/Payment';
+import { assertIsolatedTestDatabase } from './assert-isolated-test-db';
+
+assertIsolatedTestDatabase();
 
 const testDatabaseConnection = async () => {
   try {
+    assertIsolatedTestDatabase();
     console.log('🚀 Starting database verification...\n');
 
     // Step 1: Connect to MongoDB

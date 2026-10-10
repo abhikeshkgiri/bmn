@@ -12,6 +12,7 @@ import { formatDistance, calculateDistance } from '@/utils/distance';
 import { formatCurrency } from '@/utils/currency';
 import { MapPin, Phone, Mail, Globe, Star, Check, Navigation, Clock, UserRound } from 'lucide-react';
 import { FavoriteButton } from '@/components/customer/FavoriteButton';
+import { PublicReviewList } from '@/components/reviews/PublicReviewList';
 
 interface Salon {
   _id: string;
@@ -20,41 +21,39 @@ interface Salon {
   description?: string;
   logo?: string;
   coverImage?: string;
+  images: string[];
   location?: {
     type: 'Point';
     coordinates: [number, number];
   };
   address: {
-    addressLine1: string;
+    addressLine1?: string;
     addressLine2?: string;
     area?: string;
     landmark?: string;
-    city: string;
-    state: string;
-    postalCode: string;
-    country: string;
+    city?: string;
+    state?: string;
+    postalCode?: string;
+    country?: string;
   };
   contact: {
-    phone: string;
+    phone?: string;
     email?: string;
     website?: string;
   };
-  openingHours: {
+  openingHours: Partial<{
     [key: string]: {
       isOpen: boolean;
       openTime?: string;
       closeTime?: string;
     };
-  };
+  }>;
   facilities: string[];
   rating: number;
   reviewCount: number;
   isVerified: boolean;
-  isActive: boolean;
-  owner: {
-    _id: string;
-    name: string;
-  };
+  services: Service[];
+  barbers: Barber[];
 }
 
 interface Service {
@@ -66,7 +65,6 @@ interface Service {
   price: number;
   discountPrice?: number;
   image?: string;
-  isActive?: boolean;
 }
 
 interface Barber {
@@ -75,6 +73,7 @@ interface Barber {
   slug?: string;
   profileImage?: string;
   bio?: string;
+  experienceYears: number;
   rating?: number;
   reviewCount?: number;
   isAvailable?: boolean;
@@ -93,6 +92,16 @@ interface AvailabilitySlot {
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
+function getSafeWebsiteUrl(value?: string): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function SalonDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -102,6 +111,7 @@ export default function SalonDetailPage() {
   const [salon, setSalon] = useState<Salon | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
   const [services, setServices] = useState<Service[]>([]);
   const [barbers, setBarbers] = useState<Barber[]>([]);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
@@ -109,10 +119,20 @@ export default function SalonDetailPage() {
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [availabilitySlots, setAvailabilitySlots] = useState<AvailabilitySlot[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState(false);
 
   // Calculate distance as derived state using useMemo
   const distance = useMemo(() => {
-    if (salon && userLat !== null && userLng !== null && salon.location?.coordinates) {
+    if (
+      salon &&
+      userLat !== null &&
+      userLng !== null &&
+      salon.location?.coordinates?.length === 2 &&
+      Number.isFinite(salon.location.coordinates[0]) &&
+      Number.isFinite(salon.location.coordinates[1]) &&
+      Math.abs(salon.location.coordinates[0]) <= 180 &&
+      Math.abs(salon.location.coordinates[1]) <= 90
+    ) {
       const [salonLng, salonLat] = salon.location.coordinates;
       return calculateDistance(userLat, userLng, salonLat, salonLng);
     }
@@ -120,93 +140,102 @@ export default function SalonDetailPage() {
   }, [salon, userLat, userLng]);
 
   useEffect(() => {
+    const controller = new AbortController();
+
     const fetchSalon = async () => {
+      setSalon(null);
+      setServices([]);
+      setBarbers([]);
+      setSelectedServiceId(null);
+      setSelectedBarberId(null);
+      setAvailabilitySlots([]);
       try {
         setLoading(true);
         setError(null);
 
-        const listResponse = await fetch(`/api/salons?slug=${encodeURIComponent(slug)}`);
-        const listData = await listResponse.json();
+        const response = await fetch(`/api/salons/${encodeURIComponent(slug)}`, {
+          signal: controller.signal,
+        });
+        const result = await response.json();
 
-        if (listData.success && listData.data.length > 0) {
-          const foundSalon = listData.data.find((s: Salon) => s.slug === slug.toLowerCase());
-          if (foundSalon) {
-            setSalon(foundSalon);
-
-            try {
-              const serviceResponse = await fetch(`/api/services?salonId=${foundSalon._id}&isActive=true&limit=50`);
-              const servicePayload = await serviceResponse.json();
-              if (servicePayload.success) {
-                setServices(servicePayload.data || []);
-                if ((servicePayload.data || []).length > 0) {
-                  setSelectedServiceId(servicePayload.data[0]._id);
-                }
-              }
-
-              const barberResponse = await fetch(`/api/barbers?salonId=${foundSalon._id}&isActive=true&limit=50`);
-              const barberPayload = await barberResponse.json();
-              if (barberPayload.success) {
-                setBarbers(barberPayload.data || []);
-                if ((barberPayload.data || []).length > 0) {
-                  setSelectedBarberId(barberPayload.data[0]._id);
-                }
-              }
-            } catch (fetchError) {
-              console.error('Failed to fetch service or barber catalog:', fetchError);
-            }
-
-            if (new URLSearchParams(window.location.search).get('book') === '1') {
-              router.replace(`/book/${foundSalon.slug}`);
-              return;
-            }
-            return;
-          }
+        if (!response.ok || !result.success || !result.data) {
+          setError(response.status === 404 ? 'This salon could not be found or is unavailable.' : 'Unable to load salon details. Please try again.');
+          return;
         }
 
-        setError('Salon not found');
-      } catch (error) {
-        setError('Failed to load salon');
-        console.error(error);
+        const foundSalon = result.data as Salon;
+        setSalon(foundSalon);
+        setServices(Array.isArray(foundSalon.services) ? foundSalon.services : []);
+        setBarbers(Array.isArray(foundSalon.barbers) ? foundSalon.barbers : []);
+        setSelectedServiceId(foundSalon.services?.[0]?._id ?? null);
+        setSelectedBarberId(foundSalon.barbers?.[0]?._id ?? null);
+
+        if (new URLSearchParams(window.location.search).get('book') === '1') {
+          router.replace(`/book/${foundSalon.slug}`);
+        }
+      } catch (fetchError) {
+        if (!controller.signal.aborted) {
+          setError('Unable to load salon details. Please try again.');
+          console.error('Failed to load salon details:', fetchError);
+        }
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
 
     if (slug) {
       fetchSalon();
     }
-  }, [router, slug]);
+    return () => controller.abort();
+  }, [retryKey, router, slug]);
 
   useEffect(() => {
+    const controller = new AbortController();
+
     const fetchAvailability = async () => {
       if (!salon || !selectedServiceId || !selectedBarberId || !selectedDate) {
         setAvailabilitySlots([]);
+        setAvailabilityError(false);
+        setAvailabilityLoading(false);
         return;
       }
 
       try {
         setAvailabilityLoading(true);
+        setAvailabilityError(false);
         const response = await fetch(
-          `/api/bookings/availability?salonId=${salon._id}&barberId=${selectedBarberId}&serviceId=${selectedServiceId}&date=${selectedDate}`
+          `/api/bookings/availability?salonId=${salon._id}&barberId=${selectedBarberId}&serviceId=${selectedServiceId}&date=${selectedDate}`,
+          { signal: controller.signal },
         );
         const result = await response.json();
-        if (result?.success && Array.isArray(result.data?.slots)) {
-          setAvailabilitySlots(result.data.slots.filter((slot: AvailabilitySlot) => slot.available));
-        } else {
-          setAvailabilitySlots([]);
+        if (!response.ok || !result?.success || !Array.isArray(result.data?.slots)) {
+          throw new Error('Availability request failed');
         }
-      } catch (err) {
-        console.error('Failed to fetch booked availability:', err);
-        setAvailabilitySlots([]);
+        setAvailabilitySlots(
+          result.data.slots.filter(
+            (slot: AvailabilitySlot) =>
+              slot.available &&
+              typeof slot.startTime === 'string' &&
+              typeof slot.endTime === 'string',
+          ),
+        );
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error('Failed to fetch booked availability:', error);
+          setAvailabilitySlots([]);
+          setAvailabilityError(true);
+        }
       } finally {
-        setAvailabilityLoading(false);
+        if (!controller.signal.aborted) setAvailabilityLoading(false);
       }
     };
 
     fetchAvailability();
+    return () => controller.abort();
   }, [salon, selectedBarberId, selectedDate, selectedServiceId]);
 
   const selectedService = services.find((service) => service._id === selectedServiceId) || services[0] || null;
+  const websiteUrl = getSafeWebsiteUrl(salon?.contact.website);
   const qualifiedBarbers = barbers.filter((barber) => {
     if (!selectedServiceId) return true;
     return !barber.services || barber.services.some((service) => service._id === selectedServiceId);
@@ -224,14 +253,21 @@ export default function SalonDetailPage() {
     return (
       <div className="min-h-screen bg-white">
         <div className="max-w-4xl mx-auto px-4 py-12">
-          <Card className="bg-red-50 border-red-200 p-8 text-center">
-            <h1 className="text-2xl font-bold text-red-600 mb-2">Salon Not Found</h1>
-            <p className="text-red-500 mb-6">{error || 'This salon could not be found'}</p>
-            <Link href="/salons">
-              <Button variant="primary">
-                Back to Salons
-              </Button>
-            </Link>
+          <Card className="p-8 text-center">
+            <h1 className="text-2xl font-bold text-foreground mb-2">
+              {error?.includes('not be found') ? 'Salon Not Found' : 'Salon Unavailable'}
+            </h1>
+            <p className="text-foreground-secondary mb-6">{error || 'This salon could not be found.'}</p>
+            <div className="flex flex-wrap justify-center gap-3">
+              {error && !error.includes('not be found') && (
+                <Button variant="primary" onClick={() => setRetryKey((key) => key + 1)}>
+                  Retry
+                </Button>
+              )}
+              <Link href="/salons">
+                <Button variant="secondary">Back to Salons</Button>
+              </Link>
+            </div>
           </Card>
         </div>
       </div>
@@ -241,30 +277,47 @@ export default function SalonDetailPage() {
   return (
     <div className="min-h-screen bg-white">
       {/* Cover Image */}
-      {(salon.coverImage || salon.logo || '/salon-placeholder.svg') && (
-        <div className="h-96 bg-gray-200 overflow-hidden">
-          <img
-            src={salon.coverImage || salon.logo || '/salon-placeholder.svg'}
-            alt={salon.name}
-            className="w-full h-full object-cover"
-            onError={(e) => {
-              e.currentTarget.onerror = null;
-              e.currentTarget.src = '/salon-placeholder.svg';
-            }}
-          />
-        </div>
-      )}
+      <div className="h-56 bg-gray-200 overflow-hidden sm:h-72 lg:h-96">
+        <img
+          src={salon.coverImage || salon.logo || '/salon-placeholder.svg'}
+          alt={salon.coverImage || salon.logo ? `${salon.name} cover photo` : 'Salon image unavailable'}
+          className="w-full h-full object-cover"
+          loading="eager"
+          onError={(event) => {
+            event.currentTarget.onerror = null;
+            event.currentTarget.src = '/salon-placeholder.svg';
+          }}
+        />
+      </div>
 
       {/* Content */}
       <div className="max-w-4xl mx-auto px-4 py-8">
+        <Link href="/salons" className="mb-6 inline-flex text-sm font-medium text-brand-pink hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
+          Back to salon discovery
+        </Link>
+        {salon.images.length > 0 && (
+          <section aria-label="Salon gallery" className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {salon.images.map((image, index) => (
+              <img
+                key={`${image}-${index}`}
+                src={image}
+                alt={`${salon.name} gallery photo ${index + 1}`}
+                className="h-32 w-full rounded-lg bg-muted object-cover sm:h-40"
+                loading="lazy"
+              />
+            ))}
+          </section>
+        )}
+
         {/* Header */}
-        <div className="flex flex-col md:flex-row gap-6 mb-12">
+        <div className="mb-12 flex flex-col gap-6 md:flex-row">
           {/* Logo */}
-          <div className="md:w-48 h-48 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
+          <div className="h-36 w-36 flex-shrink-0 overflow-hidden rounded-lg bg-gray-100 md:h-48 md:w-48">
             <img
               src={salon.logo || salon.coverImage || '/salon-placeholder.svg'}
-              alt={salon.name}
+              alt={salon.logo ? `${salon.name} logo` : `${salon.name} image`}
               className="w-full h-full object-cover"
+              loading="lazy"
               onError={(e) => {
                 e.currentTarget.onerror = null;
                 e.currentTarget.src = '/salon-placeholder.svg';
@@ -303,9 +356,10 @@ export default function SalonDetailPage() {
 
             {/* Quick Actions */}
             <div className="flex flex-wrap gap-3">
-              <Button variant="primary" onClick={() => router.push(`/book/${salon.slug}`)}>Book Appointment</Button>
+              <Button variant="primary" onClick={() => router.push(`/book/${encodeURIComponent(salon.slug)}`)}>
+                Book Appointment
+              </Button>
               <FavoriteButton targetType="SALON" targetId={salon._id} />
-              <Button variant="ghost">Share</Button>
             </div>
           </div>
         </div>
@@ -341,7 +395,11 @@ export default function SalonDetailPage() {
                     )}
                   </div>
                 </div>
-                {salon.location?.coordinates && (
+                {salon.location?.coordinates?.length === 2 &&
+                  Number.isFinite(salon.location.coordinates[0]) &&
+                  Number.isFinite(salon.location.coordinates[1]) &&
+                  Math.abs(salon.location.coordinates[0]) <= 180 &&
+                  Math.abs(salon.location.coordinates[1]) <= 90 && (
                   <div className="flex gap-2 mt-4">
                     <Button
                       variant="outline"
@@ -349,9 +407,9 @@ export default function SalonDetailPage() {
                       onClick={() => {
                         const [lng, lat] = salon.location!.coordinates;
                         const googleMapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(
-                          salon.address.addressLine1 + ' ' + salon.address.city
+                          `${salon.address.addressLine1} ${salon.address.city}`
                         )}/@${lat},${lng},15z`;
-                        window.open(googleMapsUrl, '_blank');
+                        window.open(googleMapsUrl, '_blank', 'noopener,noreferrer');
                       }}
                     >
                       <Navigation size={16} className="mr-2" />
@@ -366,12 +424,14 @@ export default function SalonDetailPage() {
             <Card className="p-6">
               <h2 className="text-2xl font-bold text-foreground mb-4">Contact</h2>
               <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <Phone size={20} className="text-brand-pink" />
-                  <a href={`tel:${salon.contact.phone}`} className="text-brand-pink hover:text-brand-pink-hover">
-                    {salon.contact.phone}
-                  </a>
-                </div>
+                {salon.contact.phone && (
+                  <div className="flex items-center gap-3">
+                    <Phone size={20} className="text-brand-pink" />
+                    <a href={`tel:${salon.contact.phone}`} className="text-brand-pink hover:text-brand-pink-hover">
+                      {salon.contact.phone}
+                    </a>
+                  </div>
+                )}
                 {salon.contact.email && (
                   <div className="flex items-center gap-3">
                     <Mail size={20} className="text-brand-pink" />
@@ -380,17 +440,21 @@ export default function SalonDetailPage() {
                     </a>
                   </div>
                 )}
-                {salon.contact.website && (
+                {getSafeWebsiteUrl(salon.contact.website) && (
                   <div className="flex items-center gap-3">
                     <Globe size={20} className="text-brand-pink" />
-                    <a
-                      href={salon.contact.website}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-brand-pink hover:text-brand-pink-hover"
-                    >
-                      {salon.contact.website}
-                    </a>
+                    {websiteUrl
+                      ? (
+                        <a
+                          href={websiteUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-brand-pink hover:text-brand-pink-hover"
+                        >
+                          {salon.contact.website}
+                        </a>
+                      )
+                      : <span className="text-foreground-secondary">{salon.contact.website}</span>}
                   </div>
                 )}
               </div>
@@ -401,12 +465,18 @@ export default function SalonDetailPage() {
               <h2 className="text-2xl font-bold text-foreground mb-4">Hours</h2>
               <div className="space-y-2">
                 {DAYS.map((day, index) => {
-                  const hours = salon.openingHours[day];
+                  const hours = salon.openingHours?.[day];
                   return (
                     <div key={day} className="flex justify-between items-center py-2 border-b border-border last:border-b-0">
                       <span className="font-medium text-foreground">{DAY_NAMES[index]}</span>
                       <span className="text-foreground-secondary">
-                        {hours.isOpen ? `${hours.openTime} - ${hours.closeTime}` : 'Closed'}
+                        {!hours
+                          ? 'Hours not provided'
+                          : hours.isOpen
+                            ? hours.openTime && hours.closeTime
+                              ? `${hours.openTime} - ${hours.closeTime}`
+                              : 'Hours not provided'
+                            : 'Closed'}
                       </span>
                     </div>
                   );
@@ -419,7 +489,7 @@ export default function SalonDetailPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-2xl font-bold text-foreground mb-1">Services & Barbers</h2>
-                  <p className="text-sm text-foreground-secondary">Service prices, duration, matching barbers, and live availability</p>
+                  <p className="text-sm text-foreground-secondary">Published services and salon professionals</p>
                 </div>
                 <Button variant="primary" size="sm" onClick={() => router.push(`/book/${salon.slug}`)}>
                   Continue booking
@@ -440,17 +510,24 @@ export default function SalonDetailPage() {
                       <button
                         key={service._id}
                         type="button"
+                        aria-pressed={selectedServiceId === service._id}
                         onClick={() => setSelectedServiceId(service._id)}
                         className={`w-full flex items-center justify-between gap-4 rounded-xl border px-4 py-3 text-left transition ${selectedServiceId === service._id ? 'border-brand-pink bg-brand-pink/5' : 'border-border hover:bg-muted'}`}
                       >
                         <span>
                           <span className="block font-semibold text-foreground">{service.name}</span>
                           <span className="block text-xs text-foreground-secondary">
-                            {service.duration} min · {service.category || 'Salon service'}
+                            {service.duration > 0 ? `${service.duration} min` : 'Duration not provided'}
+                            {service.category ? ` · ${service.category}` : ''}
                           </span>
+                          {service.description && (
+                            <span className="mt-1 block text-xs text-foreground-secondary">{service.description}</span>
+                          )}
                         </span>
                         <span className="font-semibold text-foreground">
-                          {service.discountPrice ? formatCurrency(service.discountPrice) : formatCurrency(service.price)}
+                          {service.discountPrice !== undefined && service.discountPrice <= service.price
+                            ? formatCurrency(service.discountPrice)
+                            : formatCurrency(service.price)}
                         </span>
                       </button>
                     ))}
@@ -464,26 +541,37 @@ export default function SalonDetailPage() {
                   </div>
                   <div className="grid gap-2">
                     {qualifiedBarbers.length === 0 && (
-                      <p className="text-sm text-foreground-secondary">No active barbers are offering this service.</p>
+                      <p className="text-sm text-foreground-secondary">No verified professionals are listed for this service.</p>
                     )}
                     {qualifiedBarbers.map((barber) => (
                       <button
                         key={barber._id}
                         type="button"
+                        aria-pressed={selectedBarberId === barber._id}
                         onClick={() => setSelectedBarberId(barber._id)}
                         className={`w-full flex items-center justify-between gap-4 rounded-xl border px-4 py-3 text-left transition ${selectedBarberId === barber._id ? 'border-brand-pink bg-brand-pink/5' : 'border-border hover:bg-muted'}`}
                       >
                         <span className="flex items-center gap-3">
-                          <span className="h-10 w-10 rounded-full bg-cover bg-center border border-border" style={{ backgroundImage: `url(${barber.profileImage || '/salon-placeholder.svg'})` }} />
+                          <img
+                            src={barber.profileImage || '/salon-placeholder.svg'}
+                            alt=""
+                            className="h-10 w-10 rounded-full border border-border bg-muted object-cover"
+                            loading="lazy"
+                          />
                           <span>
                             <span className="block font-semibold text-foreground">{barber.name}</span>
                             <span className="block text-xs text-foreground-secondary">
                               {barber.specializations?.length ? barber.specializations.join(' · ') : 'Salon expert'}
                             </span>
+                            {barber.experienceYears > 0 && (
+                              <span className="block text-xs text-foreground-secondary">
+                                {barber.experienceYears} {barber.experienceYears === 1 ? 'year' : 'years'} experience
+                              </span>
+                            )}
                           </span>
                         </span>
                         <span className="text-xs text-foreground-secondary">
-                          {barber.rating ? `${barber.rating} ★` : 'Profile'}
+                          {barber.rating ? `${barber.rating} ★` : 'Select'}
                         </span>
                       </button>
                     ))}
@@ -514,7 +602,11 @@ export default function SalonDetailPage() {
                       </div>
                     )}
                     {!availabilityLoading && availabilitySlots.length === 0 && (
-                      <span className="text-sm text-foreground-secondary">No available slots returned for this service and barber.</span>
+                      <span className="text-sm text-foreground-secondary">
+                        {availabilityError
+                          ? 'Availability could not be loaded. Continue to booking to check current times.'
+                          : 'No available slots returned for this service and barber.'}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -524,7 +616,11 @@ export default function SalonDetailPage() {
                     <span className="text-sm text-foreground-secondary">Selected service</span>
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-semibold text-foreground">{selectedService.name}</span>
-                      <span className="font-semibold text-brand-pink">{formatCurrency(selectedService.price)}</span>
+                      <span className="font-semibold text-brand-pink">
+                        {selectedService.discountPrice !== undefined && selectedService.discountPrice <= selectedService.price
+                          ? formatCurrency(selectedService.discountPrice)
+                          : formatCurrency(selectedService.price)}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -543,25 +639,19 @@ export default function SalonDetailPage() {
                 </div>
               </Card>
             )}
+            <PublicReviewList endpoint={`/api/salons/${salon._id}/reviews`} title="Customer reviews" />
           </div>
 
           {/* Sidebar */}
           <div className="lg:col-span-1">
             <Card className="p-6 sticky top-4">
-              <h3 className="text-lg font-semibold text-foreground mb-4">Quick Info</h3>
+              <h3 className="text-lg font-semibold text-foreground mb-4">Ready to visit?</h3>
               <div className="space-y-4">
-                <div>
-                  <p className="text-sm text-foreground-secondary mb-1">Owner</p>
-                  <p className="font-semibold text-foreground">{salon.owner.name}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-foreground-secondary mb-1">Status</p>
-                  <Badge variant={salon.isActive ? 'success' : 'error'}>
-                    {salon.isActive ? 'Active' : 'Inactive'}
-                  </Badge>
-                </div>
-                <Button variant="primary" fullWidth onClick={() => router.push(`/book/${salon.slug}`)}>
-                  Book Appointment
+                <p className="text-sm text-foreground-secondary">
+                  Review services and continue to the salon&apos;s booking page when you&apos;re ready.
+                </p>
+                <Button variant="primary" fullWidth onClick={() => router.push(`/book/${encodeURIComponent(salon.slug)}`)}>
+                  Continue to booking
                 </Button>
               </div>
             </Card>

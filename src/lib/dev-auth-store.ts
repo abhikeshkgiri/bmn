@@ -17,6 +17,7 @@ interface DevOtpRecord {
   expiresAt: number;
   attempts: number;
   verified: boolean;
+  signupRole: typeof USER_ROLES.CUSTOMER | typeof USER_ROLES.SALON_OWNER;
 }
 
 interface DevUserRecord {
@@ -28,10 +29,25 @@ interface DevUserRecord {
   role: string;
   isActive: boolean;
   isVerified: boolean;
+  notificationPreferences?: AuthUser['notificationPreferences'];
 }
 
-const otpStore = new Map<string, DevOtpRecord>();
-const userStore = new Map<string, DevUserRecord>();
+interface DevAuthStore {
+  otp: Map<string, DevOtpRecord>;
+  users: Map<string, DevUserRecord>;
+}
+
+const DEV_AUTH_STORE_KEY = '__bookmynaiDevAuthStore';
+const globalWithDevAuth = globalThis as typeof globalThis & {
+  [DEV_AUTH_STORE_KEY]?: DevAuthStore;
+};
+
+const store = globalWithDevAuth[DEV_AUTH_STORE_KEY] ??= {
+  otp: new Map<string, DevOtpRecord>(),
+  users: new Map<string, DevUserRecord>(),
+};
+const otpStore = store.otp;
+const userStore = store.users;
 
 function hashOtp(otp: string): string {
   return crypto.createHash('sha256').update(otp).digest('hex');
@@ -53,7 +69,10 @@ export function shouldUseDevAuthFallback(): boolean {
   return process.env.NODE_ENV !== 'production' && AUTH_DEV_MODE;
 }
 
-export function devRequestOtp(phoneInput: string): { otp: string | null; success: boolean } {
+export function devRequestOtp(
+  phoneInput: string,
+  signupRole: typeof USER_ROLES.CUSTOMER | typeof USER_ROLES.SALON_OWNER = USER_ROLES.CUSTOMER
+): { otp: string | null; success: boolean } {
   if (!shouldUseDevAuthFallback()) {
     return { otp: null, success: false };
   }
@@ -74,6 +93,7 @@ export function devRequestOtp(phoneInput: string): { otp: string | null; success
     expiresAt: now + OTP_CONFIG.EXPIRY_MINUTES * 60 * 1000,
     attempts: 0,
     verified: false,
+    signupRole,
   });
 
   return { otp, success: true };
@@ -117,7 +137,7 @@ export function devVerifyOtpAndGetUser(phoneInput: string, otpInput: string): { 
       _id: crypto.randomUUID(),
       name: '',
       phone,
-      role: USER_ROLES.CUSTOMER,
+      role: record.signupRole,
       isActive: true,
       isVerified: true,
     };
@@ -141,4 +161,38 @@ export function devVerifyOtpAndGetUser(phoneInput: string, otpInput: string): { 
   };
 
   return { user: authUser, isNewUser };
+}
+
+export function getDevAuthUserById(userId: string): AuthUser | null {
+  if (!shouldUseDevAuthFallback()) return null;
+
+  const user = Array.from(userStore.values()).find((record) => record._id === userId);
+  if (!user) return null;
+
+  return {
+    _id: user._id,
+    name: user.name,
+    phone: user.phone,
+    email: user.email,
+    avatar: user.avatar,
+    role: user.role as AuthUser['role'],
+    isActive: user.isActive,
+    isVerified: user.isVerified,
+    notificationPreferences: user.notificationPreferences,
+  };
+}
+
+export function updateDevAuthUser(
+  userId: string,
+  updates: Partial<Pick<DevUserRecord, 'name' | 'email' | 'avatar' | 'notificationPreferences'>>
+): AuthUser | null {
+  if (!shouldUseDevAuthFallback()) return null;
+
+  const entry = Array.from(userStore.entries()).find(([, user]) => user._id === userId);
+  if (!entry) return null;
+
+  const [phone, user] = entry;
+  const updatedUser = { ...user, ...updates };
+  setUserRecord(phone, updatedUser);
+  return getDevAuthUserById(userId);
 }

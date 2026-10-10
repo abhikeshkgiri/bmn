@@ -53,6 +53,7 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+On Windows, the project runner uses Next.js Webpack for development and production builds because Turbopack's native bindings may be unavailable on that platform.
 
 ## Available Scripts
 
@@ -60,7 +61,11 @@ Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
 - `npm run build` - Build for production
 - `npm run start` - Start production server
 - `npm run lint` - Run ESLint to check code quality
+- `npm run test:db:safety` - Verify the isolated test database guard without database writes
+- `npm run test:booking:fixtures` - Validate synthetic booking fixtures locally without database writes
+- `npm run test:phase15` - Run synthetic booking-concurrency tests against the isolated test database
 
+Database-backed test commands require `.env.local` to set `BOOKMYNAI_TEST_DB=bookmynai_dev` and `MONGODB_URI` to that database on the approved development cluster. The test runner validates both values before connecting and refuses other databases, including `abhikesh_db`. Never put production credentials or real customer data in test fixtures.
 ## Environment Variables
 
 Create a `.env.local` file in the project root with the following variables:
@@ -755,17 +760,9 @@ Functions:
 
 Set `AUTH_DEV_MODE=true` in `.env.local` to enable development features:
 
-1. **Console OTP Display**: OTP appears in server console when Send OTP is called
-   ```
-   📱 [DEV OTP] Phone: +919876543210, OTP: 123456
-   ```
+1. **Fixed Development OTP**: Use `123456` for all development testing (set in constants/auth.ts). The send-OTP response returns the development code for the UI to display.
 
-2. **Development OTP Provider**: All SMS send attempts are logged instead of actually sending
-   ```
-   ⚠️ This is development mode only. In production, OTP would be sent via SMS/WhatsApp.
-   ```
-
-3. **Fixed Development OTP**: Use `123456` for all development testing (set in constants/auth.ts)
+2. **Temporary in-memory fallback**: When `AUTH_DEV_MODE=true`, OTP login and customer signup can run without MongoDB or SMS. These development accounts and profile changes are stored only in process memory and are lost when the server restarts. Fallback-created accounts use the `CUSTOMER` role; this is not a substitute for database-backed role testing or persistent accounts.
 
 In production (`NODE_ENV=production`), all development features are disabled:
 - OTP is randomly generated and never logged

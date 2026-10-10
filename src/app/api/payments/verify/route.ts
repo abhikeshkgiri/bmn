@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
           status: payment.status,
           method: payment.method,
           provider: payment.provider,
-          paidAt: payment.updatedAt,
+          paidAt: payment.paidAt ?? null,
         },
       },
       { status: 200 }

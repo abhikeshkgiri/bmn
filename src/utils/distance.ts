@@ -65,9 +65,16 @@ export function isValidCoordinates(lat: number, lng: number): boolean {
  * Supports: "28.7, 77.1" or "28.7,77.1"
  */
 export function parseCoordinates(coordString: string): { lat: number; lng: number } | null {
-  const parts = coordString.split(',').map((s) => parseFloat(s.trim()));
+  const coordinateParts = coordString.split(',').map((part) => part.trim());
+  if (coordinateParts.length !== 2 || coordinateParts.some((part) => part.length === 0)) {
+    return null;
+  }
+  if (coordinateParts.some((part) => !/^-?(?:\d+\.?\d*|\.\d+)$/.test(part))) {
+    return null;
+  }
 
-  if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) {
+  const parts = coordinateParts.map(Number);
+  if (parts.some((coordinate) => !Number.isFinite(coordinate))) {
     return null;
   }
 

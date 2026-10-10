@@ -33,13 +33,27 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       );
     }
+    if (currentUser.role !== 'CUSTOMER') {
+      return NextResponse.json(
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Only customers can create bookings' } },
+        { status: 403 }
+      );
+    }
 
     if (isRateLimited(`booking:${currentUser._id}`, 10, 10 * 60 * 1000)) {
       return NextResponse.json({ success: false, error: { code: 'RATE_LIMITED', message: 'Too many booking attempts' } }, { status: 429 });
     }
 
     // Parse and validate request body
-    const body = await request.json();
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { success: false, error: { code: 'VALIDATION_ERROR', message: 'Request body must be valid JSON' } },
+        { status: 400 }
+      );
+    }
     const validatedInput = BookingCreateSchema.parse(body);
 
     // Create booking through service layer
@@ -120,16 +134,22 @@ export async function GET(request: NextRequest) {
         { status: 401 }
       );
     }
+    if (currentUser.role !== 'CUSTOMER') {
+      return NextResponse.json(
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Only customers can view customer bookings' } },
+        { status: 403 }
+      );
+    }
 
     // Parse query parameters
     const searchParams = request.nextUrl.searchParams;
     const queryData = {
-      page: searchParams.get('page'),
-      limit: searchParams.get('limit'),
-      status: searchParams.get('status'),
-      paymentStatus: searchParams.get('paymentStatus'),
-      sortBy: searchParams.get('sortBy'),
-      sortOrder: searchParams.get('sortOrder'),
+      page: searchParams.get('page') ?? undefined,
+      limit: searchParams.get('limit') ?? undefined,
+      status: searchParams.get('status') ?? undefined,
+      paymentStatus: searchParams.get('paymentStatus') ?? undefined,
+      sortBy: searchParams.get('sortBy') ?? undefined,
+      sortOrder: searchParams.get('sortOrder') ?? undefined,
     };
 
     // Validate query parameters
@@ -140,6 +160,9 @@ export async function GET(request: NextRequest) {
       page: validatedQuery.page,
       limit: validatedQuery.limit,
       status: validatedQuery.status,
+      paymentStatus: validatedQuery.paymentStatus,
+      sortBy: validatedQuery.sortBy,
+      sortOrder: validatedQuery.sortOrder,
     });
 
     return NextResponse.json(

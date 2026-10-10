@@ -125,6 +125,7 @@ const seedDatabase = async (): Promise<SeedData> => {
       rating: 4.5,
       reviewCount: 45,
       isVerified: true,
+      approvalStatus: 'APPROVED',
       isActive: true,
     });
     console.log(`   ✅ Salon created: ${salon._id}\n`);

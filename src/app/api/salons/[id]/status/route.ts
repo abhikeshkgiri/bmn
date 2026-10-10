@@ -69,6 +69,13 @@ export async function PATCH(
     if (error instanceof Error) {
       const message = error.message;
 
+      if (message.startsWith('CITY_NOT_SUPPORTED:')) {
+        return NextResponse.json(
+          { success: false, error: { code: 'CITY_NOT_SUPPORTED', message: message.split(':').slice(1).join(':').trim() } },
+          { status: 422 }
+        );
+      }
+
       if (message.includes('SALON_NOT_FOUND')) {
         return NextResponse.json(
           {

@@ -5,6 +5,7 @@ import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { Star, MapPin, Clock } from 'lucide-react';
 import { FavoriteButton } from '@/components/customer/FavoriteButton';
+import { PublicReviewList } from '@/components/reviews/PublicReviewList';
 
 interface Service {
   _id: string;
@@ -219,6 +220,7 @@ export default async function BarberDetailPage({
                 </div>
               </Card>
             )}
+            <PublicReviewList endpoint={`/api/barbers/${barber._id}/reviews`} title="Customer reviews" />
           </div>
 
           {/* Sidebar */}

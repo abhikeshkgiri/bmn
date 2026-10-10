@@ -1,10 +1,16 @@
+require('./test-db-bootstrap.cjs');
+
 import assert from 'node:assert/strict';
 import { connectDB } from '@/lib/db';
 import Salon from '@/models/Salon';
 import Service from '@/models/Service';
 import Barber from '@/models/Barber';
+import { assertIsolatedTestDatabase } from './assert-isolated-test-db';
+
+assertIsolatedTestDatabase();
 
 async function main() {
+  assertIsolatedTestDatabase();
   await connectDB();
   const salon = await Salon.findOne({ slug: 'bold-trim-club', isActive: true }).lean();
   assert.ok(salon, 'Bold Trim Club should exist after the development seed');

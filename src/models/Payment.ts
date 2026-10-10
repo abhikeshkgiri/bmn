@@ -23,7 +23,9 @@ interface IPayment extends Document {
   providerPaymentId?: string; // Payment ID from payment provider
   providerSignature?: string; // Signature for verification
   status: PaymentStatus;
+  paidAt?: Date;
   refundAmount?: number; // in paise
+  processedRefundIds: string[];
   metadata?: Record<string, unknown>; // Additional payment provider data
   createdAt: Date;
   updatedAt: Date;
@@ -88,11 +90,13 @@ const PaymentSchema = new Schema<IPayment>(
       default: PAYMENT_STATUS.PENDING,
       index: true,
     },
+    paidAt: { type: Date, default: null },
     refundAmount: {
       type: Number,
       default: 0,
       min: 0,
     },
+    processedRefundIds: { type: [String], default: [] },
     metadata: {
       type: Schema.Types.Mixed,
       default: {},

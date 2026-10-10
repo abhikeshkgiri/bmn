@@ -13,6 +13,11 @@ import { sendOtp } from '@/lib/otp-provider';
 import { rateLimiter } from '@/lib/rate-limit';
 import { OTP_CONFIG, AUTH_ERRORS, AUTH_DEV_MODE, DEV_OTP } from '@/constants/auth';
 import { USER_ROLES } from '@/constants/roles';
+import {
+  devRequestOtp,
+  devVerifyOtpAndGetUser,
+  shouldUseDevAuthFallback,
+} from '@/lib/dev-auth-store';
 
 import type { AuthUser } from '@/types';
 
@@ -20,7 +25,7 @@ import type { AuthUser } from '@/types';
  * Generate a random OTP
  */
 export function generateOtp(): string {
-  return Math.floor(Math.random() * 1000000)
+  return crypto.randomInt(0, 10 ** OTP_CONFIG.LENGTH)
     .toString()
     .padStart(OTP_CONFIG.LENGTH, '0');
 }
@@ -37,17 +42,30 @@ export function hashOtp(otp: string): string {
  */
 export function verifyOtpHash(otp: string, hash: string): boolean {
   const otpHash = hashOtp(otp);
-  return otpHash === hash;
+  const actual = Buffer.from(otpHash, 'hex');
+  const expected = Buffer.from(hash, 'hex');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function isExpectedOtpError(error: unknown): boolean {
+  const expectedErrors: string[] = [
+    AUTH_ERRORS.OTP_INVALID,
+    AUTH_ERRORS.OTP_EXPIRED,
+    AUTH_ERRORS.OTP_ATTEMPTS_EXCEEDED,
+    AUTH_ERRORS.USER_INACTIVE,
+  ];
+  return error instanceof Error && expectedErrors.includes(error.message);
 }
 
 /**
  * Request OTP for phone number
  * Returns generated OTP in dev mode, null in production
  */
-export async function requestOtp(phoneInput: string): Promise<{ otp: string | null; success: boolean }> {
+export async function requestOtp(
+  phoneInput: string,
+  signupRole: typeof USER_ROLES.CUSTOMER | typeof USER_ROLES.SALON_OWNER = USER_ROLES.CUSTOMER
+): Promise<{ otp: string | null; success: boolean }> {
   try {
-    await connectDB();
-
     // Normalize phone number
     const phone = normalizePhoneNumber(phoneInput);
 
@@ -56,6 +74,12 @@ export async function requestOtp(phoneInput: string): Promise<{ otp: string | nu
     if (!isAllowed) {
       return { otp: null, success: false };
     }
+
+    if (shouldUseDevAuthFallback()) {
+      return devRequestOtp(phone, signupRole);
+    }
+
+    await connectDB();
 
     // Invalidate any existing unverified OTPs for this phone
     await OtpVerification.updateMany({ phone, verified: false }, { verified: true });
@@ -81,6 +105,7 @@ export async function requestOtp(phoneInput: string): Promise<{ otp: string | nu
       expiresAt,
       attempts: 0,
       verified: false,
+      signupRole,
     });
 
     // Send OTP through provider
@@ -108,6 +133,10 @@ export async function verifyOtpAndGetUser(
   otpInput: string
 ): Promise<{ user: AuthUser; isNewUser: boolean }> {
   try {
+    if (shouldUseDevAuthFallback()) {
+      return devVerifyOtpAndGetUser(phoneInput, otpInput);
+    }
+
     await connectDB();
 
     // Normalize phone number
@@ -123,8 +152,10 @@ export async function verifyOtpAndGetUser(
       throw new Error(AUTH_ERRORS.OTP_INVALID);
     }
 
+    const now = new Date();
+
     // Check if OTP is expired
-    if (new Date() > otpRecord.expiresAt) {
+    if (now >= otpRecord.expiresAt) {
       throw new Error(AUTH_ERRORS.OTP_EXPIRED);
     }
 
@@ -135,15 +166,31 @@ export async function verifyOtpAndGetUser(
 
     // Verify OTP
     if (!verifyOtpHash(otpInput, otpRecord.otpHash)) {
-      // Increment attempts
-      otpRecord.attempts += 1;
-      await otpRecord.save();
+      await OtpVerification.updateOne(
+        {
+          _id: otpRecord._id,
+          verified: false,
+          expiresAt: { $gt: now },
+          attempts: { $lt: OTP_CONFIG.MAX_ATTEMPTS },
+        },
+        { $inc: { attempts: 1 } },
+      );
       throw new Error(AUTH_ERRORS.OTP_INVALID);
     }
 
-    // Mark OTP as verified
-    otpRecord.verified = true;
-    await otpRecord.save();
+    // Consume the OTP atomically so concurrent verification requests cannot reuse it.
+    const consumed = await OtpVerification.updateOne(
+      {
+        _id: otpRecord._id,
+        verified: false,
+        expiresAt: { $gt: now },
+        attempts: { $lt: OTP_CONFIG.MAX_ATTEMPTS },
+      },
+      { $set: { verified: true } },
+    );
+    if (consumed.modifiedCount !== 1) {
+      throw new Error(AUTH_ERRORS.OTP_INVALID);
+    }
 
     // Find or create user
     let user = await User.findOne({ phone });
@@ -154,7 +201,7 @@ export async function verifyOtpAndGetUser(
       user = await User.create({
         name: 'New User',
         phone,
-        role: USER_ROLES.CUSTOMER,
+        role: otpRecord.signupRole === USER_ROLES.SALON_OWNER ? USER_ROLES.SALON_OWNER : USER_ROLES.CUSTOMER,
         isActive: true,
         isVerified: true,
       });
@@ -177,7 +224,9 @@ export async function verifyOtpAndGetUser(
       isNewUser,
     };
   } catch (error) {
-    console.error('Error verifying OTP:', error);
+    if (!isExpectedOtpError(error)) {
+      console.error('Error verifying OTP:', error);
+    }
     throw error;
   }
 }

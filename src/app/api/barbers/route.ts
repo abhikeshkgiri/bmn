@@ -91,6 +91,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (message === 'BARBER_ROLE_REQUIRED' || message === 'BARBER_ALREADY_ASSOCIATED') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: message,
+            message: message === 'BARBER_ROLE_REQUIRED'
+              ? 'The account must complete barber onboarding before it can be associated with a salon.'
+              : 'This barber already has a salon association. Historical bookings are preserved by preventing reassignment.',
+          },
+        },
+        { status: 409 }
+      );
+    }
+
     // Service validation error
     if (message.includes('SERVICE_INVALID')) {
       return NextResponse.json(

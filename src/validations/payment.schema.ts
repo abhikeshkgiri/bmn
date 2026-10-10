@@ -24,9 +24,9 @@ export type CreatePaymentOrderInput = z.infer<typeof CreatePaymentOrderSchema>;
  */
 export const VerifyPaymentSchema = z.object({
   bookingId: mongoIdSchema,
-  razorpay_order_id: z.string().min(1, 'Order ID required'),
-  razorpay_payment_id: z.string().min(1, 'Payment ID required'),
-  razorpay_signature: z.string().min(1, 'Signature required'),
+  razorpay_order_id: z.string().regex(/^order_[A-Za-z0-9]+$/, 'Invalid order ID'),
+  razorpay_payment_id: z.string().regex(/^pay_[A-Za-z0-9]+$/, 'Invalid payment ID'),
+  razorpay_signature: z.string().regex(/^[a-f\d]{64}$/i, 'Invalid payment signature'),
 });
 
 export type VerifyPaymentInput = z.infer<typeof VerifyPaymentSchema>;
@@ -37,9 +37,9 @@ export type VerifyPaymentInput = z.infer<typeof VerifyPaymentSchema>;
  */
 export const PaymentFailureSchema = z.object({
   bookingId: mongoIdSchema,
-  razorpay_order_id: z.string().min(1, 'Order ID required'),
-  error_code: z.string().optional(),
-  error_description: z.string().optional(),
+  razorpay_order_id: z.string().regex(/^order_[A-Za-z0-9]+$/, 'Invalid order ID'),
+  error_code: z.string().max(100).optional(),
+  error_description: z.string().max(500).optional(),
 });
 
 export type PaymentFailureInput = z.infer<typeof PaymentFailureSchema>;

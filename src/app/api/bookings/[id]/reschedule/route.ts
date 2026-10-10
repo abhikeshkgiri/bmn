@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { rescheduleBooking } from '@/services/booking.service';
-import { BookingRescheduleSchema } from '@/validations/booking.schema';
+import { BookingIdSchema, BookingRescheduleSchema } from '@/validations/booking.schema';
 import { ZodError } from 'zod';
 
 interface Params {
@@ -16,6 +16,12 @@ interface Params {
 export async function PATCH(request: NextRequest, { params }: { params: Promise<Params> }) {
   try {
     const { id } = await params;
+    if (!BookingIdSchema.safeParse(id).success) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_ID', message: 'Booking ID is invalid' } },
+        { status: 400 }
+      );
+    }
 
     // Require authentication
     const currentUser = await getCurrentUser();
@@ -33,7 +39,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     // Parse and validate request body
-    const body = await request.json();
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { success: false, error: { code: 'VALIDATION_ERROR', message: 'Request body must be valid JSON' } },
+        { status: 400 }
+      );
+    }
     const validatedInput = BookingRescheduleSchema.parse(body);
 
     // Reschedule booking through service layer

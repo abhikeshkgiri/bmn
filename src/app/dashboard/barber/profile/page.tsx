@@ -134,9 +134,16 @@ export default function BarberProfilePage() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium mb-1">Profile image URL</label>
-                <Input value={form.profileImage} onChange={(e) => setForm({ ...form, profileImage: e.target.value })} />
+              <div className="rounded-lg border border-border bg-neutral-50 p-4">
+                <p className="text-sm font-medium">Profile photograph</p>
+                {form.profileImage ? (
+                  <img src={form.profileImage} alt="Current barber profile" className="mt-3 h-20 w-20 rounded-full object-cover" />
+                ) : (
+                  <p className="mt-2 text-sm text-foreground-secondary">No photograph uploaded.</p>
+                )}
+                <p className="mt-2 text-xs text-foreground-secondary">
+                  Secure photo uploads are not configured yet. Your current image is preserved; URL edits are disabled.
+                </p>
               </div>
 
               <div>

@@ -4,14 +4,26 @@
  */
 
 import { Types } from 'mongoose';
-import Review, { type IReview, ReviewTarget } from '@/models/Review';
+import Review, { type IReview } from '@/models/Review';
 import Booking, { type IBooking } from '@/models/Booking';
 import Salon from '@/models/Salon';
+import Barber from '@/models/Barber';
+import Service from '@/models/Service';
+import User from '@/models/User';
 import { connectDB } from '@/lib/db';
 import type { AuthUser } from '@/types';
 import { BOOKING_STATUS } from '@/constants/booking';
 import { USER_ROLES } from '@/constants/roles';
 import { REVIEW_VALIDATION, REVIEW_STATUS, REVIEW_TARGET } from '@/constants/reviews';
+import { isSalonApproved } from '@/utils/salon-approval';
+import { isSupportedSalonLocation } from '@/constants/launch-cities';
+import { calculateRatingStatsFromCounts, type RatingStats } from '@/utils/review';
+import {
+  ReviewCreateSchema,
+  ReviewIdSchema,
+  ReviewListQuerySchema,
+  ReviewUpdateSchema,
+} from '@/validations/review.schema';
 import { createNotification } from './notification.service';
 import { NOTIFICATION_TYPES } from '@/constants/notifications';
 
@@ -38,14 +50,6 @@ export interface ReviewQueryOptions {
   customerId?: string;
 }
 
-export interface RatingStats {
-  averageRating: number;
-  totalReviews: number;
-  ratingDistribution: {
-    [key: number]: number; // 1-5 star counts
-  };
-}
-
 /**
  * Error codes for review operations
  */
@@ -54,6 +58,7 @@ export const REVIEW_ERRORS = {
   BOOKING_NOT_COMPLETED: { code: 'BOOKING_NOT_COMPLETED', message: 'Booking must be completed to review' },
   BOOKING_NOT_OWNED: { code: 'BOOKING_NOT_OWNED', message: 'You can only review your own bookings' },
   INVALID_RATING: { code: 'INVALID_RATING', message: 'Rating must be between 1 and 5' },
+  INVALID_INPUT: { code: 'INVALID_INPUT', message: 'Review data is invalid' },
   REVIEW_TOO_SHORT: {
     code: 'REVIEW_TOO_SHORT',
     message: `Review must be at least ${REVIEW_VALIDATION.MIN_REVIEW_LENGTH} characters`,
@@ -66,6 +71,7 @@ export const REVIEW_ERRORS = {
   REVIEW_NOT_FOUND: { code: 'REVIEW_NOT_FOUND', message: 'Review not found' },
   REVIEW_NOT_OWNED: { code: 'REVIEW_NOT_OWNED', message: 'You can only edit or delete your own reviews' },
   UNAUTHORIZED: { code: 'UNAUTHORIZED', message: 'Not authorized to perform this action' },
+  TARGET_MISMATCH: { code: 'TARGET_MISMATCH', message: 'The review target must belong to the completed booking' },
 } as const;
 
 /**
@@ -77,15 +83,23 @@ async function validateReviewRequest(
 ): Promise<{
   booking: IBooking & { _id: Types.ObjectId };
 }> {
+  const parsedPayload = ReviewCreateSchema.safeParse({
+    bookingId: payload.bookingId,
+    rating: payload.rating,
+    review: payload.review,
+    target: payload.target,
+  });
+  if (!parsedPayload.success || !ReviewIdSchema.safeParse(payload.bookingId).success) {
+    throw REVIEW_ERRORS.INVALID_BOOKING;
+  }
+
   // Validate user is customer
   if (payload.currentUser.role !== USER_ROLES.CUSTOMER) {
     throw REVIEW_ERRORS.UNAUTHORIZED;
   }
 
   // Fetch booking
-  const booking = (await Booking.findById(payload.bookingId)
-    .populate('salon')
-    .populate('barber')) as IBooking & { _id: Types.ObjectId };
+  const booking = await Booking.findById(payload.bookingId).maxTimeMS(5000) as (IBooking & { _id: Types.ObjectId }) | null;
 
   if (!booking) {
     throw REVIEW_ERRORS.INVALID_BOOKING;
@@ -99,6 +113,12 @@ async function validateReviewRequest(
   // Verify booking is completed
   if (booking.status !== BOOKING_STATUS.COMPLETED) {
     throw REVIEW_ERRORS.BOOKING_NOT_COMPLETED;
+  }
+
+  const salon = await Salon.findById(booking.salon).maxTimeMS(5000);
+  if (!salon || !salon.isActive || !isSalonApproved(salon) ||
+    !isSupportedSalonLocation(salon.address.city, salon.address.state)) {
+    throw REVIEW_ERRORS.TARGET_MISMATCH;
   }
 
   // Verify appointment date has passed
@@ -127,11 +147,15 @@ async function validateReviewRequest(
  * Validate review content
  */
 function validateReviewContent(rating: number, review?: string): void {
-  if (rating < REVIEW_VALIDATION.MIN_RATING || rating > REVIEW_VALIDATION.MAX_RATING) {
-    throw REVIEW_ERRORS.INVALID_RATING;
+  if (
+    !Number.isInteger(rating) ||
+    rating < REVIEW_VALIDATION.MIN_RATING ||
+    rating > REVIEW_VALIDATION.MAX_RATING
+  ) {
+    throw REVIEW_ERRORS.INVALID_INPUT;
   }
 
-  if (review) {
+  if (review !== undefined && review.trim().length > 0) {
     if (review.trim().length < REVIEW_VALIDATION.MIN_REVIEW_LENGTH) {
       throw REVIEW_ERRORS.REVIEW_TOO_SHORT;
     }
@@ -153,9 +177,32 @@ export async function createReview(payload: ReviewCreatePayload): Promise<IRevie
   // Validate content
   validateReviewContent(payload.rating, payload.review);
 
-  // Validate target
-  if (!Object.values(REVIEW_TARGET).includes(payload.target as ReviewTarget)) {
-    throw { code: 'INVALID_TARGET', message: 'Invalid review target' };
+  const targetId =
+    payload.target === REVIEW_TARGET.SALON ? booking.salon :
+      payload.target === REVIEW_TARGET.BARBER ? booking.barber :
+        payload.target === REVIEW_TARGET.SERVICE ? booking.service : null;
+  if (!targetId) throw REVIEW_ERRORS.TARGET_MISMATCH;
+
+  if (payload.target === REVIEW_TARGET.BARBER) {
+    const barber = await Barber.findOne({
+      _id: targetId,
+      salon: booking.salon,
+      isActive: true,
+      isVerified: true,
+    }).select('_id user').maxTimeMS(5000);
+    const barberUser = barber ? await User.findOne({
+      _id: barber.user,
+      role: USER_ROLES.BARBER,
+      isActive: true,
+    }).select('_id').maxTimeMS(5000) : null;
+    if (!barber || !barberUser) throw REVIEW_ERRORS.TARGET_MISMATCH;
+  } else if (payload.target === REVIEW_TARGET.SERVICE) {
+    const service = await Service.findOne({
+      _id: targetId,
+      salon: booking.salon,
+      isActive: true,
+    }).select('_id').maxTimeMS(5000);
+    if (!service) throw REVIEW_ERRORS.TARGET_MISMATCH;
   }
 
   // Determine which entity is being reviewed based on target
@@ -170,17 +217,25 @@ export async function createReview(payload: ReviewCreatePayload): Promise<IRevie
   }
 
   // Create review
-  const review = await Review.create({
-    customer: new Types.ObjectId(payload.currentUser._id),
-    booking: new Types.ObjectId(payload.bookingId),
-    salon: booking.salon,
-    barber: booking.barber,
-    service: booking.service,
-    target: payload.target,
-    rating: payload.rating,
-    review: payload.review?.trim() || undefined,
-    status: REVIEW_STATUS.PUBLISHED,
-  });
+  let review: IReview;
+  try {
+    review = await Review.create({
+      customer: new Types.ObjectId(payload.currentUser._id),
+      booking: new Types.ObjectId(payload.bookingId),
+      salon: booking.salon,
+      barber: booking.barber,
+      service: booking.service,
+      target: payload.target,
+      rating: payload.rating,
+      review: payload.review?.trim() || undefined,
+      status: REVIEW_STATUS.PUBLISHED,
+    });
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 11000) {
+      throw REVIEW_ERRORS.DUPLICATE_REVIEW;
+    }
+    throw error;
+  }
 
   // Send notification to salon owner
   try {
@@ -203,7 +258,7 @@ export async function createReview(payload: ReviewCreatePayload): Promise<IRevie
     // Don't fail review creation if notification fails
   }
 
-  return review.populate(['customer', 'booking', 'salon', 'barber', 'service']);
+  return review;
 }
 
 /**
@@ -211,6 +266,15 @@ export async function createReview(payload: ReviewCreatePayload): Promise<IRevie
  */
 export async function updateReview(payload: ReviewUpdatePayload): Promise<IReview> {
   await connectDB();
+
+  if (payload.currentUser.role !== USER_ROLES.CUSTOMER) throw REVIEW_ERRORS.UNAUTHORIZED;
+  const parsedPayload = ReviewUpdateSchema.safeParse({
+    rating: payload.rating,
+    review: payload.review,
+  });
+  if (!ReviewIdSchema.safeParse(payload.reviewId).success || !parsedPayload.success) {
+    throw REVIEW_ERRORS.INVALID_INPUT;
+  }
 
   const review = (await Review.findById(payload.reviewId)) as IReview & { _id: Types.ObjectId };
 
@@ -237,7 +301,7 @@ export async function updateReview(payload: ReviewUpdatePayload): Promise<IRevie
   }
 
   await review.save();
-  return review.populate(['customer', 'booking', 'salon', 'barber', 'service']);
+  return review;
 }
 
 /**
@@ -246,6 +310,8 @@ export async function updateReview(payload: ReviewUpdatePayload): Promise<IRevie
 export async function deleteReview(reviewId: string, currentUser: AuthUser): Promise<void> {
   await connectDB();
 
+  if (currentUser.role !== USER_ROLES.CUSTOMER) throw REVIEW_ERRORS.UNAUTHORIZED;
+  if (!ReviewIdSchema.safeParse(reviewId).success) throw REVIEW_ERRORS.INVALID_INPUT;
   const review = (await Review.findById(reviewId)) as IReview & { _id: Types.ObjectId };
 
   if (!review) {
@@ -273,12 +339,26 @@ export async function getSalonReviews(
 }> {
   await connectDB();
 
-  const page = options.page || 1;
-  const limit = options.limit || 10;
+  const parsedOptions = ReviewListQuerySchema.safeParse({
+    page: options.page?.toString(),
+    limit: options.limit?.toString(),
+  });
+  if (!parsedOptions.success) throw REVIEW_ERRORS.INVALID_INPUT;
+  if (!ReviewIdSchema.safeParse(salonId).success) throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
+  const salon = await Salon.findById(salonId)
+    .select('_id isActive isVerified approvalStatus address')
+    .maxTimeMS(5000);
+  if (!salon || !salon.isActive || !isSalonApproved(salon) ||
+    !isSupportedSalonLocation(salon.address.city, salon.address.state)) {
+    throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
+  }
+
+  const { page, limit } = parsedOptions.data;
   const skip = (page - 1) * limit;
 
   const query = {
     salon: new Types.ObjectId(salonId),
+    target: REVIEW_TARGET.SALON,
     status: REVIEW_STATUS.PUBLISHED,
   };
 
@@ -286,14 +366,20 @@ export async function getSalonReviews(
   const totalPages = Math.ceil(total / limit);
 
   const reviews = (await Review.find(query)
-    .populate('customer')
+    .select('customer salon barber service target rating review status createdAt')
+    .populate('customer', 'name avatar')
     .sort({ createdAt: -1 })
     .skip(skip)
-    .limit(limit)) as IReview[];
+    .limit(limit)
+    .maxTimeMS(5000)) as IReview[];
 
-  // Calculate rating statistics
-  const allReviews = await Review.find(query).select('rating');
-  const stats = calculateRatingStats(allReviews);
+  const ratingCounts = await Review.aggregate<{ _id: number; count: number }>([
+    { $match: query },
+    { $group: { _id: '$rating', count: { $sum: 1 } } },
+  ]).option({ maxTimeMS: 5000 });
+  const stats = calculateRatingStatsFromCounts(
+    ratingCounts.map(({ _id, count }) => ({ rating: _id, count }))
+  );
 
   return {
     reviews,
@@ -315,12 +401,36 @@ export async function getBarberReviews(
 }> {
   await connectDB();
 
-  const page = options.page || 1;
-  const limit = options.limit || 10;
+  const parsedOptions = ReviewListQuerySchema.safeParse({
+    page: options.page?.toString(),
+    limit: options.limit?.toString(),
+  });
+  if (!parsedOptions.success) throw REVIEW_ERRORS.INVALID_INPUT;
+  if (!ReviewIdSchema.safeParse(barberId).success) throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
+  const barber = await Barber.findOne({
+    _id: barberId,
+    isActive: true,
+    isVerified: true,
+  }).select('_id user salon').maxTimeMS(5000);
+  const barberUser = barber ? await User.findOne({
+    _id: barber.user,
+    role: USER_ROLES.BARBER,
+    isActive: true,
+  }).select('_id').maxTimeMS(5000) : null;
+  const salon = barber ? await Salon.findById(barber.salon)
+    .select('_id isActive isVerified approvalStatus address')
+    .maxTimeMS(5000) : null;
+  if (!barber || !barberUser || !salon || !salon.isActive || !isSalonApproved(salon) ||
+    !isSupportedSalonLocation(salon.address.city, salon.address.state)) {
+    throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
+  }
+
+  const { page, limit } = parsedOptions.data;
   const skip = (page - 1) * limit;
 
   const query = {
     barber: new Types.ObjectId(barberId),
+    target: REVIEW_TARGET.BARBER,
     status: REVIEW_STATUS.PUBLISHED,
   };
 
@@ -328,14 +438,20 @@ export async function getBarberReviews(
   const totalPages = Math.ceil(total / limit);
 
   const reviews = (await Review.find(query)
-    .populate('customer')
+    .select('customer salon barber service target rating review status createdAt')
+    .populate('customer', 'name avatar')
     .sort({ createdAt: -1 })
     .skip(skip)
-    .limit(limit)) as IReview[];
+    .limit(limit)
+    .maxTimeMS(5000)) as IReview[];
 
-  // Calculate rating statistics
-  const allReviews = await Review.find(query).select('rating');
-  const stats = calculateRatingStats(allReviews);
+  const ratingCounts = await Review.aggregate<{ _id: number; count: number }>([
+    { $match: query },
+    { $group: { _id: '$rating', count: { $sum: 1 } } },
+  ]).option({ maxTimeMS: 5000 });
+  const stats = calculateRatingStatsFromCounts(
+    ratingCounts.map(({ _id, count }) => ({ rating: _id, count }))
+  );
 
   return {
     reviews,
@@ -356,8 +472,14 @@ export async function getCustomerReviews(
 }> {
   await connectDB();
 
-  const page = options.page || 1;
-  const limit = options.limit || 10;
+  const parsedOptions = ReviewListQuerySchema.safeParse({
+    page: options.page?.toString(),
+    limit: options.limit?.toString(),
+  });
+  if (!ReviewIdSchema.safeParse(customerId).success || !parsedOptions.success) {
+    throw REVIEW_ERRORS.INVALID_INPUT;
+  }
+  const { page, limit } = parsedOptions.data;
   const skip = (page - 1) * limit;
 
   const query = { customer: new Types.ObjectId(customerId) };
@@ -366,7 +488,10 @@ export async function getCustomerReviews(
   const totalPages = Math.ceil(total / limit);
 
   const reviews = (await Review.find(query)
-    .populate(['booking', 'salon', 'barber'])
+    .populate({ path: 'booking', select: 'bookingNumber appointmentDate startTime endTime status' })
+    .populate({ path: 'salon', select: 'name slug' })
+    .populate({ path: 'barber', select: 'name slug profileImage' })
+    .populate({ path: 'service', select: 'name category' })
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit)) as IReview[];
@@ -381,40 +506,14 @@ export async function getCustomerReviews(
  * Calculate average rating and distribution
  */
 export function calculateRatingStats(reviews: IReview[]): RatingStats {
-  if (reviews.length === 0) {
-    return {
-      averageRating: 0,
-      totalReviews: 0,
-      ratingDistribution: {
-        1: 0,
-        2: 0,
-        3: 0,
-        4: 0,
-        5: 0,
-      },
-    };
-  }
-
-  const distribution = {
-    1: 0,
-    2: 0,
-    3: 0,
-    4: 0,
-    5: 0,
-  };
-
-  let totalRating = 0;
-
-  for (const review of reviews) {
-    totalRating += review.rating;
-    distribution[review.rating as 1 | 2 | 3 | 4 | 5]++;
-  }
-
-  return {
-    averageRating: Math.round((totalRating / reviews.length) * 10) / 10,
-    totalReviews: reviews.length,
-    ratingDistribution: distribution,
-  };
+  return calculateRatingStatsFromCounts(
+    Object.entries(
+      reviews.reduce<Record<number, number>>((counts, review) => {
+        counts[review.rating] = (counts[review.rating] || 0) + 1;
+        return counts;
+      }, {})
+    ).map(([rating, count]) => ({ rating: Number(rating), count }))
+  );
 }
 
 /**
@@ -423,12 +522,12 @@ export function calculateRatingStats(reviews: IReview[]): RatingStats {
 export async function getSalonRatingStats(salonId: string): Promise<RatingStats> {
   await connectDB();
 
-  const reviews = (await Review.find({
-    salon: new Types.ObjectId(salonId),
-    status: REVIEW_STATUS.PUBLISHED,
-  }).select('rating')) as IReview[];
-
-  return calculateRatingStats(reviews);
+  if (!ReviewIdSchema.safeParse(salonId).success) throw REVIEW_ERRORS.INVALID_INPUT;
+  const ratingCounts = await Review.aggregate<{ _id: number; count: number }>([
+    { $match: { salon: new Types.ObjectId(salonId), target: REVIEW_TARGET.SALON, status: REVIEW_STATUS.PUBLISHED } },
+    { $group: { _id: '$rating', count: { $sum: 1 } } },
+  ]).option({ maxTimeMS: 5000 });
+  return calculateRatingStatsFromCounts(ratingCounts.map(({ _id, count }) => ({ rating: _id, count })));
 }
 
 /**
@@ -437,12 +536,12 @@ export async function getSalonRatingStats(salonId: string): Promise<RatingStats>
 export async function getBarberRatingStats(barberId: string): Promise<RatingStats> {
   await connectDB();
 
-  const reviews = (await Review.find({
-    barber: new Types.ObjectId(barberId),
-    status: REVIEW_STATUS.PUBLISHED,
-  }).select('rating')) as IReview[];
-
-  return calculateRatingStats(reviews);
+  if (!ReviewIdSchema.safeParse(barberId).success) throw REVIEW_ERRORS.INVALID_INPUT;
+  const ratingCounts = await Review.aggregate<{ _id: number; count: number }>([
+    { $match: { barber: new Types.ObjectId(barberId), target: REVIEW_TARGET.BARBER, status: REVIEW_STATUS.PUBLISHED } },
+    { $group: { _id: '$rating', count: { $sum: 1 } } },
+  ]).option({ maxTimeMS: 5000 });
+  return calculateRatingStatsFromCounts(ratingCounts.map(({ _id, count }) => ({ rating: _id, count })));
 }
 
 /**
@@ -451,6 +550,9 @@ export async function getBarberRatingStats(barberId: string): Promise<RatingStat
 export async function canReviewBooking(bookingId: string, customerId: string): Promise<boolean> {
   await connectDB();
 
+  if (!ReviewIdSchema.safeParse(bookingId).success || !ReviewIdSchema.safeParse(customerId).success) {
+    return false;
+  }
   const booking = await Booking.findById(bookingId);
   if (!booking || booking.customer.toString() !== customerId) {
     return false;
@@ -471,11 +573,11 @@ export async function canReviewBooking(bookingId: string, customerId: string): P
 export async function getReview(reviewId: string): Promise<IReview | null> {
   await connectDB();
 
-  return (await Review.findById(reviewId).populate([
-    'customer',
-    'booking',
-    'salon',
-    'barber',
-    'service',
-  ])) as IReview | null;
+  if (!ReviewIdSchema.safeParse(reviewId).success) return null;
+  return (await Review.findById(reviewId)
+    .populate('customer', 'name avatar')
+    .populate({ path: 'booking', select: 'bookingNumber appointmentDate startTime endTime status' })
+    .populate({ path: 'salon', select: 'name slug' })
+    .populate({ path: 'barber', select: 'name slug profileImage' })
+    .populate({ path: 'service', select: 'name category' })) as IReview | null;
 }

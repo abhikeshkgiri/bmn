@@ -1,17 +1,19 @@
 import { z } from 'zod';
 import {
   BOOKING_STATUS_ARRAY,
-  BOOKING_TYPE_ARRAY,
   PAYMENT_STATUS_ARRAY,
   PAYMENT_METHOD_ARRAY,
   PAYMENT_PROVIDER_ARRAY,
   PAYMENT_CURRENCY_ARRAY,
+  BOOKING_TYPE,
 } from '@/constants/booking';
+import { parseLocalCalendarDate } from '@/utils/booking';
 
 /**
  * MongoDB ObjectId validation (24 hex characters)
  */
 const mongoIdSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid ID format');
+export const BookingIdSchema = mongoIdSchema;
 
 /**
  * Time format validation (HH:MM)
@@ -19,6 +21,10 @@ const mongoIdSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid ID format');
 const timeFormatSchema = z
   .string()
   .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Time must be in HH:MM format (24-hour)');
+const calendarDateSchema = z.string().refine(
+  (date) => parseLocalCalendarDate(date) !== null,
+  'Date must be a valid calendar date in YYYY-MM-DD format'
+);
 
 // ============================================
 // PHASE 8: BOOKING CREATION SCHEMA
@@ -33,17 +39,9 @@ export const BookingCreateSchema = z
     salonId: mongoIdSchema,
     barberId: mongoIdSchema,
     serviceId: mongoIdSchema,
-    appointmentDate: z
-      .string()
-      .refine(
-        (date) => {
-          const d = new Date(date);
-          return d instanceof Date && !isNaN(d.getTime());
-        },
-        'Invalid date format'
-      ),
+    appointmentDate: calendarDateSchema,
     startTime: timeFormatSchema,
-    bookingType: z.enum(BOOKING_TYPE_ARRAY as [string, ...string[]]),
+    bookingType: z.literal(BOOKING_TYPE.SALON),
     customerNotes: z.string().max(500, 'Notes must be 500 characters or less').optional(),
     couponCode: z.string().trim().min(3).max(50).optional(),
     loyaltyPoints: z.number().int().min(0).optional(),
@@ -79,15 +77,7 @@ export type BookingCancelInput = z.infer<typeof BookingCancelSchema>;
  */
 export const BookingRescheduleSchema = z
   .object({
-    appointmentDate: z
-      .string()
-      .refine(
-        (date) => {
-          const d = new Date(date);
-          return d instanceof Date && !isNaN(d.getTime());
-        },
-        'Invalid date format'
-      ),
+    appointmentDate: calendarDateSchema,
     startTime: timeFormatSchema,
   })
   .strict();
@@ -110,15 +100,7 @@ export const AvailabilityQuerySchema = z.object({
   salonId: mongoIdSchema,
   barberId: mongoIdSchema,
   serviceId: mongoIdSchema,
-  date: z
-    .string()
-    .refine(
-      (date) => {
-        const d = new Date(date);
-        return d instanceof Date && !isNaN(d.getTime());
-      },
-      'Invalid date format'
-    ),
+  date: calendarDateSchema,
 });
 
 export type AvailabilityQueryInput = z.infer<typeof AvailabilityQuerySchema>;
@@ -127,7 +109,7 @@ export type AvailabilityQueryInput = z.infer<typeof AvailabilityQuerySchema>;
  * Booking list query schema
  */
 export const BookingListQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
+  page: z.coerce.number().int().min(1).max(10000).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(10),
   status: z.enum(BOOKING_STATUS_ARRAY as [string, ...string[]]).optional(),
   paymentStatus: z.enum(PAYMENT_STATUS_ARRAY as [string, ...string[]]).optional(),

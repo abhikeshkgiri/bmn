@@ -32,7 +32,7 @@ export default function CurrentLocationButton({
 
   if (error) {
     return (
-      <div className="space-y-2">
+      <div className="space-y-2" role="alert">
         <p className="text-sm text-red-600">{error}</p>
         <Button variant="outline" size="sm" onClick={handleClick} disabled={disabled}>
           <MapPin size={16} className="mr-2" />
@@ -44,13 +44,10 @@ export default function CurrentLocationButton({
 
   if (latitude !== null && longitude !== null) {
     return (
-      <div className="space-y-2">
-        <p className="text-sm text-green-600">✓ Location detected</p>
-        <div className="text-xs text-foreground-muted">
-          {latitude.toFixed(4)}, {longitude.toFixed(4)}
-        </div>
+      <div className="space-y-2" role="status">
+        <p className="text-sm text-green-600">Location detected. Your coordinates are not displayed.</p>
         {onLocationReceived && (
-          <Button variant="primary" size="sm" onClick={handleUseLocation}>
+          <Button variant="primary" size="sm" onClick={handleUseLocation} disabled={disabled}>
             Use This Location
           </Button>
         )}

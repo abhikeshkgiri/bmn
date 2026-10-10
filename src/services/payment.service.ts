@@ -5,14 +5,26 @@
  */
 
 import Payment, { type IPayment } from '@/models/Payment';
+import { randomUUID } from 'node:crypto';
 import Booking, { type IBooking } from '@/models/Booking';
+import {
+  isBookingHoldExpired,
+} from '@/utils/booking';
+import {
+  isProviderPaymentCaptured,
+  isProviderPaymentMatching,
+  isRefundWithinBalance,
+} from '@/utils/payment';
 import WebhookEvent from '@/models/WebhookEvent';
 import { connectDB } from '@/lib/db';
-import { getRazorpayClient, verifyPaymentSignature } from '@/lib/razorpay';
+import {
+  getRazorpayClient,
+  getRazorpayPublicKeyId,
+  verifyPaymentSignature,
+} from '@/lib/razorpay';
 import type { AuthUser } from '@/types';
 import { PAYMENT_STATUS, PAYMENT_METHOD, PAYMENT_PROVIDER, BOOKING_STATUS } from '@/constants/booking';
 import {
-  notifyPaymentFailed,
   notifyPaymentSuccess,
 } from '@/services/notification.service';
 import { recordAuditEvent } from '@/services/audit.service';
@@ -45,6 +57,10 @@ export const PAYMENT_ERRORS = {
   INVALID_PAYMENT: {
     code: 'INVALID_PAYMENT',
     message: 'Invalid payment state',
+  },
+  PAYMENT_CAPTURED_BOOKING_UNCONFIRMED: {
+    code: 'PAYMENT_CAPTURED_BOOKING_UNCONFIRMED',
+    message: 'Payment was captured but the booking could not be confirmed. Please contact support.',
   },
   INVALID_SIGNATURE: {
     code: 'INVALID_SIGNATURE',
@@ -80,6 +96,17 @@ export const PAYMENT_ERRORS = {
   },
 };
 
+async function syncRefundStatusToBooking(payment: IPayment): Promise<void> {
+  if (!payment.booking) return;
+  await Booking.updateOne(
+    {
+      _id: payment.booking,
+      paymentStatus: { $in: [PAYMENT_STATUS.PAID, PAYMENT_STATUS.PARTIALLY_REFUNDED] },
+    },
+    { $set: { paymentStatus: payment.status } },
+  );
+}
+
 /**
  * Create Razorpay order for a booking
  * Returns order details for frontend Checkout
@@ -114,36 +141,59 @@ export async function createRazorpayOrder(
     throw PAYMENT_ERRORS.FORBIDDEN;
   }
 
-  // Verify booking is not cancelled
-  if (booking.status === BOOKING_STATUS.CANCELLED || (booking.holdExpiresAt && booking.holdExpiresAt <= new Date())) {
+  if (
+    booking.status !== BOOKING_STATUS.PENDING ||
+    booking.paymentStatus === PAYMENT_STATUS.PAID ||
+    !booking.holdExpiresAt ||
+    isBookingHoldExpired(booking.holdExpiresAt)
+  ) {
     throw PAYMENT_ERRORS.BOOKING_CANCELLED;
   }
 
-  // Check if payment already completed
-  const existingPayment = await Payment.findOne({
-    booking: bookingId,
-    status: PAYMENT_STATUS.PAID,
-  });
+  if (!Number.isSafeInteger(booking.totalAmount) || booking.totalAmount <= 0) {
+    throw PAYMENT_ERRORS.INVALID_PAYMENT;
+  }
 
-  if (existingPayment) {
+  const keyId = getRazorpayPublicKeyId();
+  const payment = (await Payment.findOne({ booking: bookingId }).sort({ updatedAt: -1 })) as IPayment | null;
+
+  if (payment?.status === PAYMENT_STATUS.PAID) {
     throw PAYMENT_ERRORS.PAYMENT_ALREADY_COMPLETED;
   }
 
-  // Get or create payment record
-  let payment = await Payment.findOne({
-    booking: bookingId,
-    status: { $in: [PAYMENT_STATUS.PENDING, PAYMENT_STATUS.AUTHORIZED] },
-  });
+  if (payment?.status === PAYMENT_STATUS.AUTHORIZED) {
+    throw PAYMENT_ERRORS.INVALID_PAYMENT;
+  }
+
+  if (payment?.status === PAYMENT_STATUS.PENDING) {
+    if (
+      payment.amount !== booking.totalAmount ||
+      payment.currency !== 'INR' ||
+      !payment.providerOrderId
+    ) {
+      throw PAYMENT_ERRORS.AMOUNT_MISMATCH;
+    }
+    return {
+      orderId: payment.providerOrderId,
+      amount: payment.amount,
+      currency: payment.currency,
+      keyId,
+    };
+  }
+
+  if (payment && payment.status !== PAYMENT_STATUS.FAILED) {
+    throw PAYMENT_ERRORS.INVALID_PAYMENT;
+  }
 
   // Create Razorpay order
   const razorpay = getRazorpayClient();
-  let razorpayOrder;
+  let razorpayOrder: { id: string };
 
   try {
     razorpayOrder = await razorpay.orders.create({
       amount: booking.totalAmount, // Already in paise
       currency: 'INR',
-      receipt: `booking_${bookingId}`,
+      receipt: `bk_${randomUUID()}`,
       notes: {
         bookingId: bookingId.toString(),
         customerId: currentUser._id.toString(),
@@ -155,30 +205,23 @@ export async function createRazorpayOrder(
   }
 
   // Create or update payment record
-  if (!payment) {
-    payment = new Payment({
-      booking: bookingId,
-      customer: currentUser._id,
-      amount: booking.totalAmount,
-      currency: 'INR',
-      method: PAYMENT_METHOD.CARD,
-      provider: PAYMENT_PROVIDER.RAZORPAY,
-      providerOrderId: razorpayOrder.id,
-      status: PAYMENT_STATUS.PENDING,
-    });
-  } else {
-    // Update existing payment with new order
-    payment.providerOrderId = razorpayOrder.id;
-    payment.status = PAYMENT_STATUS.PENDING;
-  }
-
-  await payment.save();
+  const newPayment = new Payment({
+    booking: bookingId,
+    customer: currentUser._id,
+    amount: booking.totalAmount,
+    currency: 'INR',
+    method: PAYMENT_METHOD.CARD,
+    provider: PAYMENT_PROVIDER.RAZORPAY,
+    providerOrderId: razorpayOrder.id,
+    status: PAYMENT_STATUS.PENDING,
+  });
+  await newPayment.save();
 
   return {
     orderId: razorpayOrder.id,
     amount: booking.totalAmount,
     currency: 'INR',
-    keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '',
+    keyId,
   };
 }
 
@@ -222,24 +265,52 @@ export async function verifyRazorpayPayment(
     throw PAYMENT_ERRORS.PAYMENT_NOT_FOUND;
   }
 
-  // Idempotency: if already paid, return existing payment
-  if (payment.status === PAYMENT_STATUS.PAID) {
-    return payment;
-  }
-
   // Verify Razorpay signature
   const isSignatureValid = verifyPaymentSignature(orderId, paymentId, signature);
   if (!isSignatureValid) {
-    await Payment.updateOne(
-      { _id: payment._id, status: { $ne: PAYMENT_STATUS.PAID } },
-      { $set: { status: PAYMENT_STATUS.FAILED } },
-    );
     throw PAYMENT_ERRORS.INVALID_SIGNATURE;
   }
 
   // Verify amount matches
-  if (payment.amount !== booking.totalAmount) {
+  if (
+    payment.amount !== booking.totalAmount ||
+    payment.currency !== 'INR'
+  ) {
     throw PAYMENT_ERRORS.AMOUNT_MISMATCH;
+  }
+
+  if (payment.status === PAYMENT_STATUS.PAID) {
+    if (payment.providerPaymentId !== paymentId) {
+      throw PAYMENT_ERRORS.INVALID_PAYMENT;
+    }
+    if (booking.paymentStatus !== PAYMENT_STATUS.PAID) {
+      throw PAYMENT_ERRORS.PAYMENT_CAPTURED_BOOKING_UNCONFIRMED;
+    }
+    return payment;
+  }
+
+  if (payment.status !== PAYMENT_STATUS.PENDING && payment.status !== PAYMENT_STATUS.AUTHORIZED) {
+    throw PAYMENT_ERRORS.INVALID_PAYMENT;
+  }
+
+  let providerPayment;
+  try {
+    providerPayment = await getRazorpayClient().payments.fetch(paymentId);
+  } catch (error) {
+    console.error('Razorpay payment lookup failed:', error);
+    throw PAYMENT_ERRORS.RAZORPAY_ERROR;
+  }
+  if (
+    !isProviderPaymentMatching(providerPayment, {
+      orderId,
+      amount: payment.amount,
+      currency: payment.currency,
+    })
+  ) {
+    throw PAYMENT_ERRORS.AMOUNT_MISMATCH;
+  }
+  if (!isProviderPaymentCaptured(providerPayment)) {
+    throw PAYMENT_ERRORS.INVALID_PAYMENT;
   }
 
   const session = await mongoose.startSession();
@@ -248,20 +319,31 @@ export async function verifyRazorpayPayment(
     await session.withTransaction(async () => {
       const currentBooking = await Booking.findOne({
         _id: bookingId,
-        status: { $ne: BOOKING_STATUS.CANCELLED },
+        status: BOOKING_STATUS.PENDING,
+        paymentStatus: { $ne: PAYMENT_STATUS.PAID },
+        holdExpiresAt: { $gt: new Date() },
       }).session(session);
 
-      if (!currentBooking) {
+      if (!currentBooking || isBookingHoldExpired(currentBooking.holdExpiresAt)) {
         throw PAYMENT_ERRORS.BOOKING_CANCELLED;
       }
 
       verifiedPayment = await Payment.findOneAndUpdate(
-        { _id: payment._id, status: { $ne: PAYMENT_STATUS.PAID } },
+        {
+          _id: payment._id,
+          status: { $in: [PAYMENT_STATUS.PENDING, PAYMENT_STATUS.AUTHORIZED] },
+          $or: [
+            { providerPaymentId: null },
+            { providerPaymentId: { $exists: false } },
+            { providerPaymentId: paymentId },
+          ],
+        },
         {
           $set: {
             providerPaymentId: paymentId,
             providerSignature: signature,
             status: PAYMENT_STATUS.PAID,
+            paidAt: new Date(),
           },
         },
         { new: true, session },
@@ -272,8 +354,13 @@ export async function verifyRazorpayPayment(
         return;
       }
 
-      await Booking.updateOne(
-        { _id: bookingId, paymentStatus: { $ne: PAYMENT_STATUS.PAID } },
+      const bookingUpdate = await Booking.updateOne(
+        {
+          _id: bookingId,
+          status: BOOKING_STATUS.PENDING,
+          paymentStatus: { $ne: PAYMENT_STATUS.PAID },
+          holdExpiresAt: { $gt: new Date() },
+        },
         {
           $set: {
             paymentStatus: PAYMENT_STATUS.PAID,
@@ -283,6 +370,9 @@ export async function verifyRazorpayPayment(
         },
         { session },
       );
+      if (bookingUpdate.modifiedCount !== 1) {
+        throw PAYMENT_ERRORS.BOOKING_CANCELLED;
+      }
     });
   } finally {
     await session.endSession();
@@ -293,6 +383,12 @@ export async function verifyRazorpayPayment(
   }
 
   const paymentToReturn = verifiedPayment as IPayment;
+  if (
+    paymentToReturn.status !== PAYMENT_STATUS.PAID ||
+    paymentToReturn.providerPaymentId !== paymentId
+  ) {
+    throw PAYMENT_ERRORS.INVALID_PAYMENT;
+  }
 
   await notifyPaymentSuccess(bookingId);
   await recordAuditEvent({
@@ -312,33 +408,55 @@ export async function verifyRazorpayPayment(
 export async function recordPaymentFailure(
   bookingId: string,
   orderId: string,
+  currentUser: AuthUser,
   errorCode?: string,
   errorDescription?: string
 ): Promise<void> {
   await connectDB();
 
-  // Find payment by order ID
+  if (currentUser.role !== 'CUSTOMER') {
+    throw PAYMENT_ERRORS.UNAUTHORIZED;
+  }
+
+  const booking = await Booking.findOne({
+    _id: bookingId,
+    customer: currentUser._id,
+    status: BOOKING_STATUS.PENDING,
+    paymentStatus: { $ne: PAYMENT_STATUS.PAID },
+    holdExpiresAt: { $gt: new Date() },
+  });
+  if (!booking) {
+    throw PAYMENT_ERRORS.BOOKING_NOT_FOUND;
+  }
+
   const payment = await Payment.findOne({
     booking: bookingId,
     providerOrderId: orderId,
   });
 
   if (payment) {
-    payment.status = PAYMENT_STATUS.FAILED;
-    if (errorCode || errorDescription) {
-      payment.metadata = {
-        ...(payment.metadata || {}),
-        errorCode,
-        errorDescription,
-      };
-    }
-    await payment.save();
-    await Booking.updateOne(
-      { _id: bookingId, paymentStatus: { $ne: PAYMENT_STATUS.PAID } },
-      { $set: { paymentStatus: PAYMENT_STATUS.FAILED } },
+    const update = await Payment.updateOne(
+    {
+      _id: payment._id,
+      status: PAYMENT_STATUS.PENDING,
+    },
+    {
+      $set: {
+        'metadata.customerReportedFailure': {
+          ...(errorCode ? { errorCode } : {}),
+          ...(errorDescription ? { errorDescription } : {}),
+          reportedAt: new Date(),
+        },
+      },
+    },
     );
-    await notifyPaymentFailed(bookingId, errorDescription || 'Payment failed');
+    if (update.matchedCount === 0) {
+    return;
+    }
+    return;
   }
+
+  throw PAYMENT_ERRORS.PAYMENT_NOT_FOUND;
 }
 
 /**
@@ -350,6 +468,10 @@ export async function getPaymentByBooking(
   currentUser: AuthUser
 ): Promise<IPayment | null> {
   await connectDB();
+
+  if (currentUser.role !== 'CUSTOMER') {
+    throw PAYMENT_ERRORS.UNAUTHORIZED;
+  }
 
   // Fetch booking to verify ownership
   const booking = (await Booking.findById(bookingId)) as IBooking | null;
@@ -366,14 +488,14 @@ export async function getPaymentByBooking(
   // Fetch and return payment
   const payment = (await Payment.findOne({
     booking: bookingId,
-  })) as IPayment | null;
+  }).sort({ updatedAt: -1 })) as IPayment | null;
 
   return payment;
 }
 
 /**
  * Get payment by ID
- * Verifies customer ownership or admin/owner access
+ * Verifies customer ownership
  */
 export async function getPaymentById(
   paymentId: string,
@@ -389,11 +511,11 @@ export async function getPaymentById(
     throw PAYMENT_ERRORS.PAYMENT_NOT_FOUND;
   }
 
-  // Check authorization
-  if (currentUser.role === 'CUSTOMER') {
-    if (!payment.booking || (payment.booking as { customer?: { toString: () => string } }).customer?.toString() !== currentUser._id) {
-      throw PAYMENT_ERRORS.FORBIDDEN;
-    }
+  if (currentUser.role !== 'CUSTOMER') {
+    throw PAYMENT_ERRORS.UNAUTHORIZED;
+  }
+  if (!payment.booking || (payment.booking as { customer?: { toString: () => string } }).customer?.toString() !== currentUser._id) {
+    throw PAYMENT_ERRORS.FORBIDDEN;
   }
 
   return payment;
@@ -417,25 +539,35 @@ export async function processRefund(
     throw PAYMENT_ERRORS.PAYMENT_NOT_FOUND;
   }
 
-  // Verify payment is PAID
-  if (payment.status !== PAYMENT_STATUS.PAID) {
+  if (
+    payment.status !== PAYMENT_STATUS.PAID &&
+    payment.status !== PAYMENT_STATUS.PARTIALLY_REFUNDED
+  ) {
     throw PAYMENT_ERRORS.INVALID_PAYMENT;
   }
 
   // Use full amount if not specified
-  const amountToRefund = refundAmount || payment.amount;
+  const amountToRefund = refundAmount === undefined ? payment.amount : refundAmount;
 
   // Verify refund amount does not exceed payment amount
-  const totalRefunded = (payment.refundAmount || 0) + amountToRefund;
-  if (totalRefunded > payment.amount) {
+  if (
+    !isRefundWithinBalance(amountToRefund, payment.refundAmount || 0, payment.amount) ||
+    !payment.providerPaymentId
+  ) {
     throw PAYMENT_ERRORS.PAYMENT_FAILED;
   }
 
   // Process refund via Razorpay
   const razorpay = getRazorpayClient();
+  let refund: {
+    id: string;
+    payment_id: string;
+    amount?: number;
+    status: 'pending' | 'processed' | 'failed';
+  };
 
   try {
-    await razorpay.payments.refund(payment.providerPaymentId || '', {
+    refund = await razorpay.payments.refund(payment.providerPaymentId, {
       amount: amountToRefund,
       notes: {
         reason: reason || 'Customer requested refund',
@@ -446,26 +578,57 @@ export async function processRefund(
     throw PAYMENT_ERRORS.REFUND_FAILED;
   }
 
-  // Update payment record
-  payment.refundAmount = (payment.refundAmount || 0) + amountToRefund;
-
-  // Update status based on refund amount
-  if (payment.refundAmount >= payment.amount) {
-    payment.status = PAYMENT_STATUS.REFUNDED;
-  } else {
-    payment.status = PAYMENT_STATUS.PARTIALLY_REFUNDED;
+  if (
+    !refund.id ||
+    refund.payment_id !== payment.providerPaymentId ||
+    refund.amount !== amountToRefund ||
+    refund.status === 'failed'
+  ) {
+    throw PAYMENT_ERRORS.REFUND_FAILED;
   }
 
-  await payment.save();
+  let updatedPayment = (await Payment.findOneAndUpdate(
+    {
+      _id: payment._id,
+      status: { $in: [PAYMENT_STATUS.PAID, PAYMENT_STATUS.PARTIALLY_REFUNDED] },
+      processedRefundIds: { $ne: refund.id },
+      $expr: {
+        $lte: [
+          { $add: [{ $ifNull: ['$refundAmount', 0] }, amountToRefund] },
+          '$amount',
+        ],
+      },
+    },
+    {
+      $inc: { refundAmount: refund.amount },
+      $addToSet: { processedRefundIds: refund.id },
+    },
+    { new: true },
+  )) as IPayment | null;
+  if (!updatedPayment) {
+    updatedPayment = (await Payment.findOne({
+      _id: payment._id,
+      processedRefundIds: refund.id,
+    })) as IPayment | null;
+  }
+  if (!updatedPayment) {
+    throw PAYMENT_ERRORS.REFUND_FAILED;
+  }
+  updatedPayment.status = refund.status === 'processed' &&
+    (updatedPayment.refundAmount || 0) >= updatedPayment.amount
+    ? PAYMENT_STATUS.REFUNDED
+    : PAYMENT_STATUS.PARTIALLY_REFUNDED;
+  await updatedPayment.save();
+  await syncRefundStatusToBooking(updatedPayment);
   await recordAuditEvent({
     actor,
     action: 'PAYMENT_REFUNDED',
     entityType: 'Payment',
-    entityId: payment._id.toString(),
-    metadata: { amount: amountToRefund, reason: reason || 'Customer requested refund' },
+    entityId: updatedPayment._id.toString(),
+    metadata: { amount: refund.amount, reason: reason || 'Customer requested refund' },
   });
 
-  return payment;
+  return updatedPayment;
 }
 
 /**
@@ -496,42 +659,92 @@ export async function handleWebhookEvent(
   try {
     switch (event) {
     case 'payment.captured': {
-      // Payment captured successfully
-      const paymentData = data.payment as Record<string, string> | undefined;
+      const paymentData = data.payment as Record<string, unknown> | undefined;
       const paymentId = paymentData?.id;
       const orderId = paymentData?.order_id;
+      const amount = paymentData?.amount;
+      const currency = paymentData?.currency;
 
-      if (paymentId && orderId) {
-        const payment = await Payment.findOneAndUpdate(
-          { providerOrderId: orderId },
-          {
+      if (
+        !paymentData ||
+        typeof paymentId !== 'string' ||
+        typeof orderId !== 'string' ||
+        typeof amount !== 'number' ||
+        typeof currency !== 'string' ||
+        !isProviderPaymentCaptured(paymentData)
+      ) {
+        throw PAYMENT_ERRORS.INVALID_PAYMENT;
+      }
+
+      const storedPayment = await Payment.findOne({ providerOrderId: orderId });
+      if (!storedPayment) {
+        throw PAYMENT_ERRORS.PAYMENT_NOT_FOUND;
+      }
+      if (!isProviderPaymentMatching(
+        { order_id: orderId, amount, currency },
+        { orderId, amount: storedPayment.amount, currency: storedPayment.currency },
+      )) {
+        throw PAYMENT_ERRORS.AMOUNT_MISMATCH;
+      }
+      if (
+        storedPayment.status === PAYMENT_STATUS.PAID &&
+        storedPayment.providerPaymentId !== paymentId
+      ) {
+        throw PAYMENT_ERRORS.INVALID_PAYMENT;
+      }
+
+      const payment = await Payment.findOneAndUpdate(
+        {
+          _id: storedPayment._id,
+          $or: [
+            { status: { $in: [PAYMENT_STATUS.PENDING, PAYMENT_STATUS.AUTHORIZED, PAYMENT_STATUS.FAILED] } },
+            { status: PAYMENT_STATUS.PAID, providerPaymentId: paymentId },
+          ],
+        },
+        {
+          $set: {
             providerPaymentId: paymentId,
             status: PAYMENT_STATUS.PAID,
+            paidAt: storedPayment.paidAt || new Date(),
           },
-          { new: true },
+        },
+        { new: true },
+      );
+      if (!payment) {
+        throw PAYMENT_ERRORS.INVALID_PAYMENT;
+      }
+
+      if (payment.booking) {
+        const bookingUpdate = await Booking.updateOne(
+          {
+            _id: payment.booking,
+            status: BOOKING_STATUS.PENDING,
+            paymentStatus: { $ne: PAYMENT_STATUS.PAID },
+            holdExpiresAt: { $gt: new Date() },
+          },
+          { $set: { paymentStatus: PAYMENT_STATUS.PAID, status: BOOKING_STATUS.CONFIRMED, holdExpiresAt: null } },
         );
-        if (payment) {
-          await Booking.updateOne(
-            { _id: payment.booking, paymentStatus: { $ne: PAYMENT_STATUS.PAID } },
-            { $set: { paymentStatus: PAYMENT_STATUS.PAID, status: BOOKING_STATUS.CONFIRMED, holdExpiresAt: null } },
-          );
+        if (bookingUpdate.modifiedCount === 0) {
+          console.error('Captured payment could not confirm an expired or non-pending booking', {
+            bookingId: payment.booking.toString(),
+            eventId,
+          });
         }
       }
       break;
     }
 
     case 'payment.failed': {
-      // Payment failed
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const orderId = (data.payment as any)?.order_id;
+      const paymentData = data.payment as Record<string, unknown> | undefined;
+      const orderId = paymentData?.order_id;
 
-      if (orderId) {
+      if (typeof orderId === 'string') {
         await Payment.updateOne(
-          { providerOrderId: orderId },
           {
-            status: PAYMENT_STATUS.FAILED,
-            metadata: data.payment,
-          }
+            providerOrderId: orderId,
+            status: { $in: [PAYMENT_STATUS.PENDING, PAYMENT_STATUS.AUTHORIZED] },
+          },
+          { $set: { status: PAYMENT_STATUS.FAILED } },
         );
       }
       break;
@@ -539,39 +752,95 @@ export async function handleWebhookEvent(
 
     case 'refund.created': {
       // Refund initiated
-      const refundData = data.refund as Record<string, string | number> | undefined;
-      const paymentId = refundData?.payment_id as string | undefined;
-      const refundAmount = refundData?.amount as number | undefined;
+      const refundData = data.refund as Record<string, unknown> | undefined;
+      const paymentId = refundData?.payment_id;
+      const refundId = refundData?.id;
+      const refundAmount = refundData?.amount;
 
-      if (paymentId && refundAmount) {
-        await Payment.updateOne(
-          { providerPaymentId: paymentId },
+      if (
+        typeof paymentId === 'string' &&
+        typeof refundId === 'string' &&
+        typeof refundAmount === 'number' &&
+        Number.isSafeInteger(refundAmount) &&
+        refundAmount > 0
+      ) {
+        let payment = await Payment.findOneAndUpdate(
+          {
+            providerPaymentId: paymentId,
+            processedRefundIds: { $ne: refundId },
+            $expr: {
+              $lte: [
+                { $add: [{ $ifNull: ['$refundAmount', 0] }, refundAmount] },
+                '$amount',
+              ],
+            },
+          },
           {
             $inc: { refundAmount },
+            $addToSet: { processedRefundIds: refundId },
             $set: { status: PAYMENT_STATUS.PARTIALLY_REFUNDED },
-          }
+          },
+          { new: true },
         );
+        if (!payment) {
+          payment = await Payment.findOne({
+            providerPaymentId: paymentId,
+            processedRefundIds: refundId,
+          });
+          if (!payment) {
+            throw PAYMENT_ERRORS.PAYMENT_FAILED;
+          }
+        }
+        await syncRefundStatusToBooking(payment);
       }
       break;
     }
 
     case 'refund.processed': {
-      // Refund completed
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const paymentId = (data.refund as any)?.payment_id;
+      const refundData = data.refund as Record<string, unknown> | undefined;
+      const paymentId = refundData?.payment_id;
+      const refundId = refundData?.id;
+      const refundAmount = refundData?.amount;
 
-      if (paymentId) {
-        const payment = (await Payment.findOne({
-          providerPaymentId: paymentId,
-        })) as IPayment | null;
-
-        if (payment) {
-          if ((payment.refundAmount || 0) >= payment.amount) {
-            payment.status = PAYMENT_STATUS.REFUNDED;
-          }
-          await payment.save();
-        }
+      if (
+        typeof paymentId !== 'string' ||
+        typeof refundId !== 'string' ||
+        typeof refundAmount !== 'number' ||
+        !Number.isSafeInteger(refundAmount) ||
+        refundAmount <= 0
+      ) {
+        throw PAYMENT_ERRORS.INVALID_PAYMENT;
       }
+
+      await Payment.updateOne(
+        {
+          providerPaymentId: paymentId,
+          processedRefundIds: { $ne: refundId },
+          $expr: {
+            $lte: [
+              { $add: [{ $ifNull: ['$refundAmount', 0] }, refundAmount] },
+              '$amount',
+            ],
+          },
+        },
+        {
+          $inc: { refundAmount },
+          $addToSet: { processedRefundIds: refundId },
+        },
+      );
+
+      const payment = await Payment.findOne({
+        providerPaymentId: paymentId,
+        processedRefundIds: refundId,
+      });
+      if (!payment) {
+        throw PAYMENT_ERRORS.PAYMENT_FAILED;
+      }
+      payment.status = (payment.refundAmount || 0) >= payment.amount
+        ? PAYMENT_STATUS.REFUNDED
+        : PAYMENT_STATUS.PARTIALLY_REFUNDED;
+      await payment.save();
+      await syncRefundStatusToBooking(payment);
       break;
     }
     }

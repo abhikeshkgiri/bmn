@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof ZodError) return NextResponse.json({ success: false, error: { code: 'VALIDATION_ERROR', details: error.issues } }, { status: 400 });
     const message = error instanceof Error ? error.message : 'Unable to complete barber onboarding';
+    if (message.startsWith('CITY_NOT_SUPPORTED:')) return NextResponse.json({ success: false, error: { code: 'CITY_NOT_SUPPORTED', message: message.split(':').slice(1).join(':').trim() } }, { status: 422 });
     const status = message === 'ONBOARDING_FORBIDDEN' ? 403 : message === 'SALON_NOT_AVAILABLE' ? 404 : 400;
     return NextResponse.json({ success: false, error: { code: message, message: 'Unable to complete barber onboarding' } }, { status });
   }

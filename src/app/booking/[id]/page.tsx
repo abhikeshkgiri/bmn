@@ -86,6 +86,12 @@ export default function BookingDetailPage() {
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('');
+  const [reviewRating, setReviewRating] = useState('');
+  const [reviewText, setReviewText] = useState('');
+  const [reviewTarget, setReviewTarget] = useState<'SALON' | 'BARBER' | 'SERVICE'>('SALON');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewMessage, setReviewMessage] = useState('');
+  const [reviewSubmitted, setReviewSubmitted] = useState(false);
 
   const fetchBooking = useCallback(async () => {
     try {
@@ -123,8 +129,8 @@ export default function BookingDetailPage() {
 
     // Can reschedule if booking is pending or confirmed and not too close to appointment
     setCanReschedule(
-      booking.status === BOOKING_STATUS.PENDING ||
-        booking.status === BOOKING_STATUS.CONFIRMED &&
+      (booking.status === BOOKING_STATUS.PENDING ||
+        booking.status === BOOKING_STATUS.CONFIRMED) &&
         minutesUntilAppointment >= BOOKING_CANCELLATION_MINUTES
     );
   }, [booking]);
@@ -168,6 +174,35 @@ export default function BookingDetailPage() {
       alert('Failed to cancel booking');
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const handleSubmitReview = async () => {
+    if (!booking || !reviewRating) return;
+    setReviewSubmitting(true);
+    setReviewMessage('');
+    try {
+      const response = await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking._id,
+          rating: Number(reviewRating),
+          review: reviewText,
+          target: reviewTarget,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setReviewMessage(result.error?.message || 'Unable to submit your review. Please try again.');
+        return;
+      }
+      setReviewSubmitted(true);
+      setReviewMessage('Thank you. Your review has been submitted.');
+    } catch {
+      setReviewMessage('Unable to submit your review. Please try again.');
+    } finally {
+      setReviewSubmitting(false);
     }
   };
 
@@ -395,6 +430,80 @@ export default function BookingDetailPage() {
               </Button>
             </div>
           </Card>
+
+          {booking.status === BOOKING_STATUS.COMPLETED && (
+            <Card className="p-6">
+              <h2 className="text-xl font-bold text-foreground mb-4">Rate your experience</h2>
+              {reviewSubmitted ? (
+                <p role="status" className="text-foreground-secondary">{reviewMessage}</p>
+              ) : (
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="review-target" className="block text-sm font-medium text-foreground mb-2">
+                      Review
+                    </label>
+                    <select
+                      id="review-target"
+                      value={reviewTarget}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value === 'SALON' || value === 'BARBER' || value === 'SERVICE') {
+                          setReviewTarget(value);
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    >
+                      <option value="SALON">Salon: {booking.salon.name}</option>
+                      <option value="BARBER">Barber: {booking.barber.name}</option>
+                      <option value="SERVICE">Service: {booking.service.name}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="review-rating" className="block text-sm font-medium text-foreground mb-2">
+                      Rating
+                    </label>
+                    <select
+                      id="review-rating"
+                      value={reviewRating}
+                      onChange={(event) => setReviewRating(event.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      required
+                    >
+                      <option value="">Choose a rating</option>
+                      {[5, 4, 3, 2, 1].map((rating) => (
+                        <option key={rating} value={rating}>{rating} out of 5</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="review-text" className="block text-sm font-medium text-foreground mb-2">
+                      Written review (optional)
+                    </label>
+                    <textarea
+                      id="review-text"
+                      value={reviewText}
+                      onChange={(event) => setReviewText(event.target.value)}
+                      maxLength={500}
+                      rows={4}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      aria-describedby="review-text-hint"
+                    />
+                    <p id="review-text-hint" className="mt-1 text-xs text-foreground-secondary">
+                      If provided, write at least 10 characters; maximum 500.
+                    </p>
+                  </div>
+                  {reviewMessage && <p role="alert" className="text-sm text-red-700">{reviewMessage}</p>}
+                  <Button
+                    variant="primary"
+                    onClick={handleSubmitReview}
+                    disabled={reviewSubmitting || !reviewRating}
+                  >
+                    {reviewSubmitting ? 'Submitting...' : 'Submit review'}
+                  </Button>
+                </div>
+              )}
+            </Card>
+          )}
 
           {/* Barber Info */}
           <Card className="p-6">

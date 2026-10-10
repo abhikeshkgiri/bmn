@@ -7,13 +7,31 @@ import Button from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Loading';
 import { USER_ROLES } from '@/constants/roles';
+import SupportedCitySelect from '@/components/location/SupportedCitySelect';
+import { isSupportedSalonLocation, SUPPORTED_LAUNCH_CITIES } from '@/constants/launch-cities';
 
 type SalonFormState = {
   name: string;
   description: string;
   contact: { phone: string; email: string; website: string };
-  address: { addressLine1: string; city: string; state: string; postalCode: string; country: string };
+  address: { addressLine1: string; area: string; city: string; state: string; postalCode: string; country: string };
+  location: { latitude: string; longitude: string };
+  openingHours: Record<string, { isOpen: boolean; openTime: string; closeTime: string }>;
 };
+
+const DAYS = [
+  ['monday', 'Monday'],
+  ['tuesday', 'Tuesday'],
+  ['wednesday', 'Wednesday'],
+  ['thursday', 'Thursday'],
+  ['friday', 'Friday'],
+  ['saturday', 'Saturday'],
+  ['sunday', 'Sunday'],
+] as const;
+
+const defaultOpeningHours = Object.fromEntries(
+  DAYS.map(([day]) => [day, { isOpen: day !== 'sunday', openTime: '09:00', closeTime: '20:00' }])
+);
 
 export default function SalonProfilePage() {
   const router = useRouter();
@@ -24,7 +42,9 @@ export default function SalonProfilePage() {
     name: '',
     description: '',
     contact: { phone: '', email: '', website: '' },
-    address: { addressLine1: '', city: '', state: '', postalCode: '', country: 'India' },
+    address: { addressLine1: '', area: '', city: '', state: '', postalCode: '', country: 'India' },
+    location: { latitude: '', longitude: '' },
+    openingHours: defaultOpeningHours,
   });
 
   useEffect(() => {
@@ -60,11 +80,23 @@ export default function SalonProfilePage() {
           },
           address: {
             addressLine1: salon.address?.addressLine1 || '',
+            area: salon.address?.area || '',
             city: salon.address?.city || '',
             state: salon.address?.state || '',
             postalCode: salon.address?.postalCode || '',
             country: salon.address?.country || 'India',
           },
+          location: {
+            latitude: String(salon.location?.coordinates?.[1] ?? ''),
+            longitude: String(salon.location?.coordinates?.[0] ?? ''),
+          },
+          openingHours: Object.fromEntries(
+            DAYS.map(([day]) => [day, {
+              isOpen: salon.openingHours?.[day]?.isOpen ?? defaultOpeningHours[day].isOpen,
+              openTime: salon.openingHours?.[day]?.openTime || '09:00',
+              closeTime: salon.openingHours?.[day]?.closeTime || '20:00',
+            }])
+          ),
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load profile');
@@ -90,6 +122,11 @@ export default function SalonProfilePage() {
           description: form.description,
           contact: form.contact,
           address: form.address,
+          location: {
+            type: 'Point',
+            coordinates: [Number(form.location.longitude), Number(form.location.latitude)],
+          },
+          openingHours: form.openingHours,
         }),
       });
 
@@ -98,7 +135,7 @@ export default function SalonProfilePage() {
         throw new Error(result?.error?.message || 'Failed to update salon profile');
       }
 
-      router.refresh();
+      router.replace('/salon/onboarding');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update salon profile');
     } finally {
@@ -137,6 +174,56 @@ export default function SalonProfilePage() {
               </div>
 
               <div>
+                <h2 className="mb-3 text-lg font-semibold">Opening hours</h2>
+                <div className="space-y-3">
+                  {DAYS.map(([day, label]) => (
+                    <div key={day} className="grid grid-cols-1 items-center gap-3 rounded-lg border border-border p-3 sm:grid-cols-[1fr_1fr_1fr]">
+                      <label className="flex items-center gap-2 font-medium">
+                        <input
+                          type="checkbox"
+                          checked={form.openingHours[day].isOpen}
+                          onChange={(event) => setForm({
+                            ...form,
+                            openingHours: {
+                              ...form.openingHours,
+                              [day]: { ...form.openingHours[day], isOpen: event.target.checked },
+                            },
+                          })}
+                        />
+                        {label}
+                      </label>
+                      <Input
+                        aria-label={`${label} opening time`}
+                        type="time"
+                        disabled={!form.openingHours[day].isOpen}
+                        value={form.openingHours[day].openTime}
+                        onChange={(event) => setForm({
+                          ...form,
+                          openingHours: {
+                            ...form.openingHours,
+                            [day]: { ...form.openingHours[day], openTime: event.target.value },
+                          },
+                        })}
+                      />
+                      <Input
+                        aria-label={`${label} closing time`}
+                        type="time"
+                        disabled={!form.openingHours[day].isOpen}
+                        value={form.openingHours[day].closeTime}
+                        onChange={(event) => setForm({
+                          ...form,
+                          openingHours: {
+                            ...form.openingHours,
+                            [day]: { ...form.openingHours[day], closeTime: event.target.value },
+                          },
+                        })}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium mb-1">Description</label>
                 <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 bg-white min-h-[120px]" />
               </div>
@@ -159,12 +246,24 @@ export default function SalonProfilePage() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">City</label>
-                  <Input value={form.address.city} onChange={(e) => setForm({ ...form, address: { ...form.address, city: e.target.value } })} />
+                  <SupportedCitySelect
+                    value={form.address.city}
+                    state={form.address.state}
+                    label="Launch city"
+                    required
+                    onChange={(location) => setForm({
+                      ...form,
+                      address: { ...form.address, city: location.city, state: location.state },
+                    })}
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">State</label>
-                  <Input value={form.address.state} onChange={(e) => setForm({ ...form, address: { ...form.address, state: e.target.value } })} />
+                  <label className="block text-sm font-medium mb-1">State / UT</label>
+                  <Input value={SUPPORTED_LAUNCH_CITIES.find((location) => location.city === form.address.city)?.state || form.address.state} readOnly />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Area / locality</label>
+                  <Input value={form.address.area} onChange={(e) => setForm({ ...form, address: { ...form.address, area: e.target.value } })} />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Postal code</label>
@@ -175,9 +274,24 @@ export default function SalonProfilePage() {
                   <Input value={form.address.country} onChange={(e) => setForm({ ...form, address: { ...form.address, country: e.target.value } })} />
                 </div>
               </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Latitude</label>
+                  <Input type="number" step="any" value={form.location.latitude} onChange={(e) => setForm({ ...form, location: { ...form.location, latitude: e.target.value } })} required />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Longitude</label>
+                  <Input type="number" step="any" value={form.location.longitude} onChange={(e) => setForm({ ...form, location: { ...form.location, longitude: e.target.value } })} required />
+                </div>
+              </div>
+              {!isSupportedSalonLocation(form.address.city, form.address.state) && (
+                <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  BookMyNai isn&apos;t available in this area yet. Choose a supported launch city before updating your salon.
+                </p>
+              )}
 
               <div className="flex justify-end">
-                <Button type="submit" variant="primary" disabled={saving}>{saving ? 'Saving...' : 'Save changes'}</Button>
+                <Button type="submit" variant="primary" disabled={saving || !isSupportedSalonLocation(form.address.city, form.address.state)}>{saving ? 'Saving...' : 'Save changes'}</Button>
               </div>
             </CardContent>
           </Card>

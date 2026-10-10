@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { createReview } from '@/services/review.service';
+import { ReviewCreateSchema } from '@/validations/review.schema';
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,26 +18,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const { bookingId, rating, review, target } = body;
-
-    if (!bookingId || rating === undefined || !target) {
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
       return NextResponse.json(
-        {
-          success: false,
-          error: { code: 'INVALID_REQUEST', message: 'bookingId, rating, and target are required' },
-        },
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'Request body must be valid JSON' } },
+        { status: 400 }
+      );
+    }
+    const parsed = ReviewCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'Review data is invalid' } },
         { status: 400 }
       );
     }
 
-    const createdReview = await createReview({
-      bookingId,
-      rating: parseInt(rating),
-      review: review?.trim() || undefined,
-      target,
-      currentUser,
-    });
+    const createdReview = await createReview({ ...parsed.data, currentUser });
 
     return NextResponse.json(
       {

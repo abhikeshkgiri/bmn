@@ -14,7 +14,14 @@ import NotificationBell from '@/components/notifications/NotificationBell';
 import { Calendar, Clock3, DollarSign, CheckCircle2 } from 'lucide-react';
 
 interface DashboardData {
-  salon: { _id: string; name: string } | null;
+  salon: {
+    _id: string;
+    name: string;
+    isActive: boolean;
+    isVerified: boolean;
+    approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+    rejectionReason?: string | null;
+  } | null;
   stats: {
     todayBookings: number;
     upcomingBookings: number;
@@ -86,6 +93,10 @@ export default function SalonDashboardRoutePage() {
 
         const response = await fetch('/api/dashboard/salon/stats');
         const result = await response.json();
+        if (response.status === 404 && result?.error?.code === 'SALON_NOT_FOUND') {
+          router.replace('/salon/onboarding');
+          return;
+        }
         if (!response.ok || !result.success) {
           throw new Error(result?.error?.message || 'Failed to load salon dashboard');
         }
@@ -133,12 +144,19 @@ export default function SalonDashboardRoutePage() {
             <p className="text-sm uppercase tracking-wide text-brand-pink font-medium">Salon dashboard</p>
             <h1 className="text-3xl font-bold text-foreground">{data.salon?.name || 'Salon Overview'}</h1>
             <p className="text-foreground-secondary">{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+            {data.salon && (
+              <p className="mt-2 text-sm font-medium">
+                Publication status: {data.salon.approvalStatus === 'REJECTED' ? 'Rejected' : (data.salon.approvalStatus === 'APPROVED' || (!data.salon.approvalStatus && data.salon.isVerified)) && data.salon.isActive ? 'Approved and published' : 'Pending admin review'}
+                {data.salon.approvalStatus === 'REJECTED' && data.salon.rejectionReason ? ` — ${data.salon.rejectionReason}` : ''}
+              </p>
+            )}
           </div>
           <div className="flex gap-3 flex-wrap items-center">
             <NotificationBell />
             <Link href="/dashboard/salon/bookings"><Button variant="primary">Bookings</Button></Link>
-            <Link href="/dashboard/salon/services"><Button variant="secondary">Services</Button></Link>
-            <Link href="/dashboard/salon/barbers"><Button variant="secondary">Barbers</Button></Link>
+            <Link href="/salon/services"><Button variant="secondary">Services</Button></Link>
+            <Link href="/salon/barbers"><Button variant="secondary">Manage Barbers</Button></Link>
+            <Link href="/dashboard/salon/profile"><Button variant="secondary">Salon profile</Button></Link>
           </div>
         </div>
 

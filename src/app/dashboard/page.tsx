@@ -84,31 +84,40 @@ export default function CustomerDashboard() {
     totalBookings: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchCustomerData = useCallback(async () => {
     try {
       setLoading(true);
+      setLoadError(null);
 
       // Fetch customer profile
       const profileResponse = await fetch('/api/auth/me');
       const profileResult = await profileResponse.json() as {
         success: boolean;
+        user?: Customer;
         data?: Customer;
       };
 
-      if (profileResult.success && profileResult.data) {
-        setCustomer(profileResult.data);
+      if (!profileResponse.ok || !profileResult.success) {
+        throw new Error(profileResponse.status === 401 ? 'Please sign in to view your dashboard.' : 'Unable to load your profile.');
+      }
+      if (profileResult.user || profileResult.data) {
+        setCustomer(profileResult.user || profileResult.data || null);
       }
 
       // Fetch bookings
-      const bookingsResponse = await fetch('/api/bookings?page=1&limit=10');
+      const bookingsResponse = await fetch('/api/bookings?page=1&limit=50');
       const bookingsResult = await bookingsResponse.json() as {
         success: boolean;
         data?: Booking[];
         pagination?: { total: number };
       };
 
-      if (bookingsResult.success && bookingsResult.data) {
+      if (!bookingsResponse.ok || !bookingsResult.success || !bookingsResult.data) {
+        throw new Error(bookingsResponse.status === 401 ? 'Please sign in to view your bookings.' : 'Unable to load your bookings.');
+      }
+      {
         const now = new Date();
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
@@ -149,6 +158,7 @@ export default function CustomerDashboard() {
       }
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);
+      setLoadError(error instanceof Error ? error.message : 'Unable to load dashboard data.');
     } finally {
       setLoading(false);
     }
@@ -158,22 +168,35 @@ export default function CustomerDashboard() {
     const checkRoleAndRedirect = async () => {
       try {
         const meResponse = await fetch('/api/auth/me');
-        if (meResponse.ok) {
-          const me = await meResponse.json();
-          const role = me?.user?.role;
-
-          if (role === USER_ROLES.SALON_OWNER || role === USER_ROLES.ADMIN || role === USER_ROLES.SUPER_ADMIN) {
-            router.replace('/dashboard/salon');
-            return;
-          }
-
-          if (role === USER_ROLES.BARBER) {
-            router.replace('/dashboard/barber');
-            return;
-          }
+        if (!meResponse.ok) {
+          router.replace('/login?next=/dashboard');
+          return;
         }
-      } catch {
-        // Ignore and continue to regular customer dashboard flow.
+        const me = await meResponse.json();
+        const role = me?.user?.role;
+
+        if (role === USER_ROLES.SALON_OWNER || role === USER_ROLES.SALON_STAFF) {
+          router.replace('/dashboard/salon');
+          return;
+        }
+
+        if (role === USER_ROLES.ADMIN || role === USER_ROLES.SUPER_ADMIN) {
+          router.replace('/admin');
+          return;
+        }
+
+        if (role === USER_ROLES.BARBER) {
+          router.replace('/dashboard/barber');
+          return;
+        }
+        if (role !== USER_ROLES.CUSTOMER) {
+          throw new Error('This account does not have customer dashboard access.');
+        }
+      } catch (error) {
+        console.error('Failed to verify customer dashboard access:', error);
+        setLoadError(error instanceof Error ? error.message : 'Unable to verify dashboard access.');
+        setLoading(false);
+        return;
       }
 
       fetchCustomerData();
@@ -193,6 +216,12 @@ export default function CustomerDashboard() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-6xl mx-auto px-4 py-12">
+        {loadError && (
+          <Card className="mb-6 flex flex-col gap-3 border-error-200 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-error-700">{loadError}</p>
+            <Button type="button" variant="secondary" onClick={fetchCustomerData}>Retry</Button>
+          </Card>
+        )}
         {/* Welcome Section */}
         <div className="bg-gradient-to-r from-brand-pink to-brand-pink/80 rounded-lg p-8 text-white mb-8">
           <div className="flex justify-between items-start">

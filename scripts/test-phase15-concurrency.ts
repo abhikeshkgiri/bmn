@@ -3,14 +3,20 @@
  * Verifies that two concurrent booking attempts for the same slot are handled correctly
  */
 
-import { Types } from 'mongoose';
+require('./test-db-bootstrap.cjs');
+
+import mongoose from 'mongoose';
 import { getAvailableSlots, createBooking } from '../src/services/booking.service';
 import { connectDB } from '../src/lib/db';
 import Booking from '../src/models/Booking';
 import Salon from '../src/models/Salon';
 import Barber from '../src/models/Barber';
 import Service from '../src/models/Service';
+import Notification from '../src/models/Notification';
 import User from '../src/models/User';
+import { BOOKING_TYPE } from '../src/constants/booking';
+import { createBookingTestFixtures } from './booking-test-fixtures';
+import { assertIsolatedTestDatabase } from './assert-isolated-test-db';
 
 interface TestConfig {
   salonCapacity: number;
@@ -34,104 +40,55 @@ interface TestResult {
  */
 async function testConcurrentBookingPrevention(config: TestConfig): Promise<TestResult> {
   const details: string[] = [];
+  assertIsolatedTestDatabase();
+  const fixtures = createBookingTestFixtures({
+    capacity: config.salonCapacity,
+    customerCount: config.concurrentBookingAttempts,
+    barberCount: Math.max(3, config.salonCapacity),
+    appointmentDate: new Date(config.targetDate),
+    startTime: config.targetTime,
+  });
+  const salonId = fixtures.salon._id;
+  const userIds = [
+    fixtures.owner._id,
+    ...fixtures.customers.map((customer) => customer._id),
+    ...fixtures.barberUsers.map((user) => user._id),
+  ];
+  const barberIds = fixtures.barbers.map((barber) => barber._id);
+  const serviceIds = [fixtures.service._id];
+  const bookingIds = fixtures.baselineBookings.map((booking) => booking._id);
+  let connectedToTestDb = false;
 
   try {
     await connectDB();
+    connectedToTestDb = true;
     details.push('✓ Connected to database');
 
-    // Setup: Create test salon with capacity 2
-    const salon = new Salon({
-      name: 'Test Salon',
-      owner: new Types.ObjectId(),
-      capacity: config.salonCapacity,
-      slotIntervalMinutes: 30,
-      openingHours: {
-        monday: { isOpen: true, openTime: '09:00', closeTime: '21:00' },
-      },
-      location: { type: 'Point', coordinates: [0, 0] },
-    });
-    await salon.save();
+    await Promise.all([fixtures.owner, ...fixtures.customers, ...fixtures.barberUsers].map((user) => user.save()));
+    await fixtures.salon.save();
     details.push(`✓ Created test salon with capacity: ${config.salonCapacity}`);
 
-    // Create test barbers
-    const barbers = [];
-    for (let i = 1; i <= 3; i++) {
-      const barber = new Barber({
-        name: `Barber ${i}`,
-        salon: salon._id,
-        isAvailable: true,
-        isActive: true,
-        experienceYears: 5,
-        specializations: [],
-        rating: 4.5,
-        reviewCount: 10,
-        offersHomeService: false,
-        isVerified: true,
-      });
-      await barber.save();
-      barbers.push(barber);
-    }
-    details.push(`✓ Created ${barbers.length} test barbers`);
-
-    // Create test service
-    const service = new Service({
-      name: 'Test Haircut',
-      duration: 30,
-      price: 500,
-      salon: salon._id,
-      isActive: true,
-    });
-    await service.save();
+    await fixtures.service.save();
+    await Promise.all(fixtures.barbers.map((barber) => barber.save()));
+    details.push(`✓ Created ${fixtures.barbers.length} test barbers and one service`);
     details.push('✓ Created test service (30 min)');
 
-    // Create test customers
-    const customers = [];
-    for (let i = 1; i <= config.concurrentBookingAttempts; i++) {
-      const customer = new User({
-        phoneNumber: `98765432${String(i).padStart(2, '0')}`,
-        role: 'CUSTOMER',
-        isVerified: true,
-        isActive: true,
-      });
-      await customer.save();
-      customers.push(customer);
-    }
-    details.push(`✓ Created ${customers.length} test customers`);
-
-    // Pre-fill capacity: Create (capacity - 1) bookings
-    const now = new Date();
-    const testDate = config.targetDate || now.toISOString().split('T')[0];
-    const testTime = config.targetTime || '17:00';
-
-    for (let i = 0; i < config.salonCapacity - 1; i++) {
-      const booking = new Booking({
-        customer: customers[0]._id,
-        salon: salon._id,
-        barber: barbers[i]._id,
-        service: service._id,
-        appointmentDate: new Date(testDate),
-        startTime: testTime,
-        endTime: '17:30',
-        duration: 30,
-        status: 'CONFIRMED',
-        paymentStatus: 'PAID',
-        totalAmount: 500,
-        servicePrice: 500,
-      });
-      await booking.save();
-    }
-    details.push(`✓ Pre-filled ${config.salonCapacity - 1} of ${config.salonCapacity} slots`);
+    await Promise.all(fixtures.baselineBookings.map((booking) => booking.save()));
+    details.push(`✓ Pre-filled ${fixtures.baselineBookings.length} of ${config.salonCapacity} slots`);
 
     // Check available slots before concurrent booking
     const availableBefore = await getAvailableSlots(
-      salon._id.toString(),
-      barbers[config.salonCapacity - 1]._id.toString(),
-      service._id.toString(),
-      testDate
+      salonId.toString(),
+      fixtures.barbers[config.salonCapacity - 1]._id.toString(),
+      fixtures.service._id.toString(),
+      config.targetDate
     );
 
-    const slotsAt17 = availableBefore.slots.find((s) => s.startTime === testTime);
-    details.push(`✓ Before concurrent test: ${slotsAt17?.remaining || 0} slots remaining at ${testTime}`);
+    const slotsAt17 = availableBefore.slots.find((s) => s.startTime === config.targetTime);
+    details.push(`✓ Before concurrent test: ${slotsAt17?.remaining || 0} slots remaining at ${config.targetTime}`);
+    if (!slotsAt17?.available || slotsAt17.remaining !== 1) {
+      throw new Error('Synthetic fixture did not produce exactly one available slot.');
+    }
 
     // Simulate concurrent booking attempts
     const bookingPromises = [];
@@ -139,16 +96,16 @@ async function testConcurrentBookingPrevention(config: TestConfig): Promise<Test
       const promise = (async () => {
         try {
           const booking = await createBooking({
-            salonId: salon._id.toString(),
-            barberId: barbers[(config.salonCapacity - 1 + i) % barbers.length]._id.toString(),
-            serviceId: service._id.toString(),
-            appointmentDate: testDate,
-            startTime: testTime,
-            bookingType: 'IN_SALON',
+            salonId: salonId.toString(),
+            barberId: fixtures.barbers[(config.salonCapacity - 1 + i) % fixtures.barbers.length]._id.toString(),
+            serviceId: fixtures.service._id.toString(),
+            appointmentDate: config.targetDate,
+            startTime: config.targetTime,
+            bookingType: BOOKING_TYPE.SALON,
             currentUser: {
-              _id: customers[i]._id.toString(),
+              _id: fixtures.customers[i]._id.toString(),
               role: 'CUSTOMER',
-              phone: customers[i].phoneNumber,
+              phone: fixtures.customers[i].phone,
               isActive: true,
               isVerified: true,
             },
@@ -165,53 +122,49 @@ async function testConcurrentBookingPrevention(config: TestConfig): Promise<Test
     const results = await Promise.all(bookingPromises);
     const successfulBookings = results.filter((r) => r.success).length;
     const failedBookings = results.filter((r) => !r.success).length;
+    bookingIds.push(...results.flatMap((result) => result.success && result.booking ? [result.booking._id] : []));
 
     details.push(`✓ Concurrent booking results: ${successfulBookings} succeeded, ${failedBookings} failed`);
 
     // Verify final state
     const availableAfter = await getAvailableSlots(
-      salon._id.toString(),
-      barbers[config.salonCapacity - 1]._id.toString(),
-      service._id.toString(),
-      testDate
+      salonId.toString(),
+      fixtures.barbers[config.salonCapacity - 1]._id.toString(),
+      fixtures.service._id.toString(),
+      config.targetDate
     );
 
-    const slotsAt17After = availableAfter.slots.find((s) => s.startTime === testTime);
+    const slotsAt17After = availableAfter.slots.find((s) => s.startTime === config.targetTime);
     const totalBookingsNow = await Booking.countDocuments({
-      salon: salon._id,
-      appointmentDate: new Date(testDate),
-      startTime: testTime,
+      salon: salonId,
+      appointmentDate: new Date(config.targetDate),
+      startTime: config.targetTime,
       status: { $in: ['CONFIRMED', 'PENDING'] },
     });
 
-    details.push(`✓ After concurrent test: ${slotsAt17After?.remaining || 0} slots remaining at ${testTime}`);
+    details.push(`✓ After concurrent test: ${slotsAt17After?.remaining || 0} slots remaining at ${config.targetTime}`);
     details.push(`✓ Total bookings at slot: ${totalBookingsNow} (capacity: ${config.salonCapacity})`);
 
-    // Cleanup
-    await Booking.deleteMany({ salon: salon._id });
-    await Barber.deleteMany({ salon: salon._id });
-    await Service.deleteMany({ salon: salon._id });
-    await Salon.deleteOne({ _id: salon._id });
-    await User.deleteMany({ _id: { $in: customers.map((c) => c._id) } });
-
     // Verify test results
-    const expectedSuccesses = Math.min(config.concurrentBookingAttempts, 1); // Only 1 should succeed if capacity is 1
+    const expectedSuccesses = Math.min(config.concurrentBookingAttempts, 1);
+    const expectedFailures = config.concurrentBookingAttempts - expectedSuccesses;
     const testPassed =
-      successfulBookings <= 1 &&
-      totalBookingsNow <= config.salonCapacity &&
-      (failedBookings > 0 || successfulBookings === 1);
+      successfulBookings === expectedSuccesses &&
+      failedBookings === expectedFailures &&
+      totalBookingsNow === config.salonCapacity &&
+      slotsAt17After?.remaining === 0;
 
     return {
       success: true,
       totalAttempts: config.concurrentBookingAttempts,
       successfulBookings,
       failedBookings,
-      expectedFailures: config.concurrentBookingAttempts - expectedSuccesses,
+      expectedFailures,
       testPassed,
       details,
     };
   } catch (error) {
-    details.push(`✗ Error: ${error instanceof Error ? error.message : String(error)}`);
+    details.push(`✗ Error: ${error instanceof Error ? error.name : 'Unknown error'}`);
     return {
       success: false,
       totalAttempts: config.concurrentBookingAttempts,
@@ -221,6 +174,29 @@ async function testConcurrentBookingPrevention(config: TestConfig): Promise<Test
       testPassed: false,
       details,
     };
+  } finally {
+    if (connectedToTestDb) {
+      if (mongoose.connection.readyState !== 1) {
+        throw new Error('Synthetic booking test lost its database connection before cleanup.');
+      }
+      const ownedBookings = await Booking.find({
+        salon: salonId,
+        customer: { $in: fixtures.customers.map((customer) => customer._id) },
+      }).select('_id').lean();
+      bookingIds.push(...ownedBookings.map((booking) => booking._id));
+      const cleanupResults = await Promise.allSettled([
+        Notification.deleteMany({ bookingId: { $in: bookingIds } }),
+        Booking.deleteMany({ _id: { $in: bookingIds } }),
+        Barber.deleteMany({ _id: { $in: barberIds } }),
+        Service.deleteMany({ _id: { $in: serviceIds } }),
+        Salon.deleteOne({ _id: salonId }),
+        User.deleteMany({ _id: { $in: userIds } }),
+      ]);
+      const cleanupFailures = cleanupResults.filter((result) => result.status === 'rejected');
+      if (cleanupFailures.length > 0) {
+        throw new Error(`Failed to clean ${cleanupFailures.length} synthetic booking-test data groups.`);
+      }
+    }
   }
 }
 
@@ -228,7 +204,7 @@ async function testConcurrentBookingPrevention(config: TestConfig): Promise<Test
 if (require.main === module) {
   const config: TestConfig = {
     salonCapacity: 2,
-    targetDate: new Date().toISOString().split('T')[0],
+    targetDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     targetTime: '17:00',
     concurrentBookingAttempts: 3,
   };

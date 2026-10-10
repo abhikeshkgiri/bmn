@@ -58,6 +58,9 @@ export default function SalonBarbersPage() {
   const [salons, setSalons] = useState<Salon[]>([]);
   const [selectedSalonId, setSelectedSalonId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [inviteError, setInviteError] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -72,28 +75,27 @@ export default function SalonBarbersPage() {
     homeServiceRadius: '10',
   });
 
-  // Fetch salons
+  // Load only the authenticated owner's salon; public discovery omits pending salons.
   useEffect(() => {
-    const fetchSalons = async () => {
+    const fetchOwnerSalon = async () => {
       try {
-        const response = await fetch('/api/salons?limit=100');
+        const response = await fetch('/api/dashboard/salon/profile');
         const result = await response.json();
-
-        if (result.success) {
-          const userSalons = result.data || [];
-          setSalons(userSalons);
-
-          if (userSalons.length > 0) {
-            setSelectedSalonId(userSalons[0]._id);
-          }
+        if (response.status === 404 && result?.error?.code === 'SALON_NOT_FOUND') {
+          router.replace('/salon/onboarding');
+          return;
         }
-      } catch {
-        console.error('Failed to fetch salons');
+        if (!response.ok || !result.success) throw new Error(result?.error?.message || 'Failed to load your salon.');
+        setSalons([result.data]);
+        setSelectedSalonId(result.data._id);
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Failed to load your salon.');
+        setLoading(false);
       }
     };
 
-    fetchSalons();
-  }, []);
+    void fetchOwnerSalon();
+  }, [router]);
 
 
 
@@ -220,6 +222,10 @@ export default function SalonBarbersPage() {
       barber.bio?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  if (loadError) {
+    return <div className="min-h-screen bg-white px-4 py-12"><Card className="mx-auto max-w-2xl p-8 text-center"><h1 className="text-2xl font-bold">Unable to load barber management</h1><p className="mt-3 text-foreground-secondary">{loadError}</p><Button className="mt-5" variant="outline" onClick={() => router.push('/salon/onboarding')}>Salon onboarding</Button></Card></div>;
+  }
+
   if (salons.length === 0 && !loading) {
     return (
       <div className="min-h-screen bg-white">
@@ -244,8 +250,31 @@ export default function SalonBarbersPage() {
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-foreground mb-2">Barber Management</h1>
-          <p className="text-foreground-secondary">Manage your salon barbers and profiles</p>
+          <p className="text-foreground-secondary">Manage barber profiles and staff associated with your salon</p>
         </div>
+
+        <Card className="mb-6 flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="font-semibold">Add a barber to your team</h2>
+            <p className="mt-1 text-sm text-foreground-secondary">Share the barber onboarding link. Staff sign in with their own account and request association with an approved salon.</p>
+            {inviteError && <p className="mt-2 text-sm text-red-600">{inviteError}</p>}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={async () => {
+              try {
+                const onboardingUrl = `${window.location.origin}/barber/onboarding`;
+                await navigator.clipboard.writeText(onboardingUrl);
+                setInviteCopied(true);
+              } catch {
+                setInviteError('Unable to copy the link. Share /barber/onboarding with your staff manually.');
+              }
+            }}
+          >
+            {inviteCopied ? 'Onboarding link copied' : 'Copy onboarding link'}
+          </Button>
+        </Card>
 
         {/* Salon Selector */}
         {salons.length > 0 && (
@@ -304,7 +333,7 @@ export default function SalonBarbersPage() {
                   placeholder="Enter user ID (24-char MongoDB ID)"
                 />
                 <p className="text-xs text-foreground-secondary mt-1">
-                  The user must exist in the system and have BARBER role
+                  The user must have an active BARBER account and must not already be associated with another salon. Never enter another person&apos;s credentials.
                 </p>
               </div>
 

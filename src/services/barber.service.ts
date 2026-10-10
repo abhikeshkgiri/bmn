@@ -13,6 +13,8 @@ import type { AuthUser } from '@/types';
 import type { BarberCreateInput, BarberUpdateInput, BarberListQuery } from '@/validations/barber.schema';
 import type { IBarber } from '@/models/Barber';
 import { recordAuditEvent } from '@/services/audit.service';
+import { getSupportedSalonLocationFilter, normalizeSupportedSalonLocation } from '@/constants/launch-cities';
+import { APPROVED_SALON_STATUS_FILTER, isSalonApproved } from '@/utils/salon-approval';
 
 export interface PaginationData {
   page: number;
@@ -107,14 +109,19 @@ export async function createBarber(
   if (!barberUser) {
     throw new Error('USER_NOT_FOUND: User not found');
   }
+  if (!barberUser.isActive) {
+    throw new Error('USER_INACTIVE');
+  }
+  if (barberUser.role !== USER_ROLES.BARBER) {
+    throw new Error('BARBER_ROLE_REQUIRED');
+  }
 
-  // Verify user is not already a barber in this salon
-  const existingBarber = await Barber.findOne({
-    user: input.userId,
-    salon: input.salonId,
-  });
-  if (existingBarber) {
+  const existingBarber = await Barber.findOne({ user: input.userId });
+  if (existingBarber?.salon.toString() === input.salonId) {
     throw new Error('BARBER_DUPLICATE: User is already a barber in this salon');
+  }
+  if (existingBarber) {
+    throw new Error('BARBER_ALREADY_ASSOCIATED');
   }
 
   // Verify all services belong to the salon
@@ -171,35 +178,39 @@ export async function getBarberById(
 ): Promise<IBarber | null> {
   await connectDB();
 
-  const barber = await Barber.findById(barberId).populate(['user', 'salon', 'services']);
+  const barber = await Barber.findById(barberId)
+    .populate('salon', 'name slug')
+    .populate('services', 'name slug description category duration price discountPrice image');
 
   if (!barber) {
     return null;
   }
 
-  // Public users only see active barbers
-  if (!currentUser && !barber.isActive) {
-    return null;
-  }
+  const salonId = barber.salon._id?.toString() || barber.salon.toString();
+  const salon = await Salon.findById(salonId);
+  if (!salon) return null;
+  const barberUserId = barber.user.toString();
+  const isAdmin = currentUser?.role === USER_ROLES.ADMIN || currentUser?.role === USER_ROLES.SUPER_ADMIN;
+  const isOwner = currentUser?.role === USER_ROLES.SALON_OWNER && salon.owner.toString() === currentUser._id;
+  const isBarber = currentUser?.role === USER_ROLES.BARBER && barberUserId === currentUser._id;
+  const isPublished = salon.isActive && isSalonApproved(salon) &&
+    Boolean(normalizeSupportedSalonLocation(salon.address.city, salon.address.state));
 
-  // Authenticated users can see inactive if they own salon or are admin
-  if (!currentUser && !barber.isActive) {
-    throw new Error('BARBER_NOT_FOUND: Barber not found');
+  if (barber.isActive && barber.isVerified && isPublished) {
+    const activeBarberAccount = await User.exists({
+      _id: barberUserId,
+      role: USER_ROLES.BARBER,
+      isActive: true,
+    });
+    if (!activeBarberAccount) return null;
+    if (!isAdmin && !isOwner && !isBarber) barber.set('user', undefined);
+    return barber;
   }
-
-  if (currentUser && !barber.isActive) {
-    // Check if user owns the salon
-    if (barber.salon._id?.toString() && currentUser.role === USER_ROLES.SALON_OWNER) {
-      const salon = await Salon.findById(barber.salon._id);
-      if (salon && salon.owner.toString() !== currentUser._id) {
-        throw new Error('BARBER_ACCESS_DENIED: You do not have access to this barber');
-      }
-    } else if (currentUser.role !== USER_ROLES.ADMIN && currentUser.role !== USER_ROLES.SUPER_ADMIN) {
-      throw new Error('BARBER_ACCESS_DENIED: You do not have access to this barber');
-    }
+  if (isAdmin || isOwner || isBarber) return barber;
+  if (currentUser?.role === USER_ROLES.SALON_OWNER) {
+    throw new Error('BARBER_ACCESS_DENIED: You do not have access to this barber');
   }
-
-  return barber;
+  return null;
 }
 
 /**
@@ -208,18 +219,35 @@ export async function getBarberById(
 export async function getBarberBySlug(slug: string, currentUser?: AuthUser): Promise<IBarber | null> {
   await connectDB();
 
-  const barber = await Barber.findOne({ slug }).populate(['user', 'salon', 'services']);
+  const barber = await Barber.findOne({ slug })
+    .populate('salon', 'name slug')
+    .populate('services', 'name slug description category duration price discountPrice image');
 
   if (!barber) {
     return null;
   }
 
-  // Public users only see active barbers
-  if (!currentUser && !barber.isActive) {
-    return null;
+  const salonId = barber.salon._id?.toString() || barber.salon.toString();
+  const salon = await Salon.findById(salonId);
+  if (!salon) return null;
+  const barberUserId = barber.user.toString();
+  const isAdmin = currentUser?.role === USER_ROLES.ADMIN || currentUser?.role === USER_ROLES.SUPER_ADMIN;
+  const isOwner = currentUser?.role === USER_ROLES.SALON_OWNER && salon.owner.toString() === currentUser._id;
+  const isBarber = currentUser?.role === USER_ROLES.BARBER && barberUserId === currentUser._id;
+  const isPublished = salon.isActive && isSalonApproved(salon) &&
+    Boolean(normalizeSupportedSalonLocation(salon.address.city, salon.address.state));
+  if (barber.isActive && barber.isVerified && isPublished) {
+    const activeBarberAccount = await User.exists({
+      _id: barberUserId,
+      role: USER_ROLES.BARBER,
+      isActive: true,
+    });
+    if (!activeBarberAccount) return null;
+    if (!isAdmin && !isOwner && !isBarber) barber.set('user', undefined);
+    return barber;
   }
-
-  return barber;
+  if (isAdmin || isOwner || isBarber) return barber;
+  return null;
 }
 
 /**
@@ -232,15 +260,48 @@ export async function listBarbers(
   await connectDB();
 
   const query: Record<string, unknown> = {};
+  const isAdmin = currentUser?.role === USER_ROLES.ADMIN || currentUser?.role === USER_ROLES.SUPER_ADMIN;
+  const isSalonOwner = currentUser?.role === USER_ROLES.SALON_OWNER;
+  const isPublic = !isAdmin && !isSalonOwner;
+  let publicSalonIds: Array<{ toString(): string }> = [];
 
-  // Public users only see active barbers
-  if (!currentUser) {
+  if (isSalonOwner) {
+    const salon = await Salon.findOne({ owner: currentUser!._id }).select('_id').lean();
+    if (!salon) {
+      query.salon = null;
+    } else {
+      if (options.salonId && options.salonId !== salon._id.toString()) {
+        throw new Error('BARBER_ACCESS_DENIED: You do not own this salon');
+      }
+      query.salon = salon._id;
+    }
+  } else if (!isAdmin) {
+    const supportedLocation = getSupportedSalonLocationFilter();
+    publicSalonIds = supportedLocation
+      ? await Salon.find({
+          isActive: true,
+          isVerified: true,
+          approvalStatus: APPROVED_SALON_STATUS_FILTER,
+          ...supportedLocation,
+        }).distinct('_id')
+      : [];
+    const activeBarberUserIds = await User.find({
+      role: USER_ROLES.BARBER,
+      isActive: true,
+    }).distinct('_id');
     query.isActive = true;
+    query.isVerified = true;
+    query.user = { $in: activeBarberUserIds };
+    query.salon = { $in: publicSalonIds };
   }
 
   // Filter by salon
   if (options.salonId) {
-    query.salon = options.salonId;
+    if (isAdmin) {
+      query.salon = options.salonId;
+    } else if (!isSalonOwner) {
+      query.salon = { $in: publicSalonIds.filter((salonId) => salonId.toString() === options.salonId) };
+    }
   }
 
   // Search
@@ -269,7 +330,7 @@ export async function listBarbers(
   }
 
   // Filter by active status
-  if (options.isActive) {
+  if (options.isActive && (isAdmin || isSalonOwner)) {
     query.isActive = options.isActive === 'true';
   }
 
@@ -293,11 +354,13 @@ export async function listBarbers(
   sort[sortField as string] = sortField === 'createdAt' ? -1 : 1;
 
   // Fetch barbers
-  const barbers = await Barber.find(query)
-    .populate(['user', 'salon', 'services'])
-    .sort(sort)
-    .skip(skip)
-    .limit(limit);
+  const barberQuery = Barber.find(query).sort(sort).skip(skip).limit(limit);
+  const barbers = isPublic
+    ? await barberQuery
+      .select('name slug profileImage bio experienceYears specializations services portfolio rating reviewCount isAvailable offersHomeService homeServiceRadius isVerified isActive salon')
+      .populate('salon', 'name slug')
+      .populate('services', 'name slug duration price discountPrice category')
+    : await barberQuery.populate(['user', 'salon', 'services']);
 
   return {
     data: barbers,

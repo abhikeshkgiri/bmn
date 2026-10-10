@@ -9,6 +9,7 @@ import { requireAuth } from '@/lib/auth';
 import { createSalon, listSalons } from '@/services/salon.service';
 import { SalonCreateSchema } from '@/validations/salon.schema';
 import { ZodError } from 'zod';
+import { getSingleQueryParam, SalonDiscoveryQuerySchema } from '@/validations/salon-discovery.schema';
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,6 +49,13 @@ export async function POST(request: NextRequest) {
 
     if (error instanceof Error) {
       const message = error.message;
+
+      if (message.startsWith('CITY_NOT_SUPPORTED:')) {
+        return NextResponse.json(
+          { success: false, error: { code: 'CITY_NOT_SUPPORTED', message: message.split(':').slice(1).join(':').trim() } },
+          { status: 422 }
+        );
+      }
 
       // Authorization errors
       if (message.includes('SALON_ACCESS_DENIED')) {
@@ -91,6 +99,13 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      if (message === 'SALON_ALREADY_EXISTS') {
+        return NextResponse.json(
+          { success: false, error: { code: 'SALON_ALREADY_EXISTS', message: 'A salon is already associated with this owner.' } },
+          { status: 409 }
+        );
+      }
+
       return NextResponse.json(
         {
           success: false,
@@ -124,54 +139,21 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '20');
-    const city = searchParams.get('city') || undefined;
-    const area = searchParams.get('area') || undefined;
-    const state = searchParams.get('state') || undefined;
-    const isVerified = searchParams.get('isVerified') ? searchParams.get('isVerified') === 'true' : undefined;
-    const search = searchParams.get('search') || undefined;
-    const slug = searchParams.get('slug') || undefined;
-    const sortBy = searchParams.get('sortBy') || 'newest';
-
-    // Validate page and limit
-    if (page < 1 || !Number.isInteger(page)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'Page must be a positive integer',
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    if (limit < 1 || limit > 50 || !Number.isInteger(limit)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'Limit must be between 1 and 50',
-          },
-        },
-        { status: 400 }
-      );
-    }
+    const params = SalonDiscoveryQuerySchema.parse({
+      page: getSingleQueryParam(searchParams, 'page'),
+      limit: getSingleQueryParam(searchParams, 'limit'),
+      city: getSingleQueryParam(searchParams, 'city'),
+      state: getSingleQueryParam(searchParams, 'state'),
+      area: getSingleQueryParam(searchParams, 'area'),
+      search: getSingleQueryParam(searchParams, 'search'),
+      serviceSearch: getSingleQueryParam(searchParams, 'serviceSearch'),
+      category: getSingleQueryParam(searchParams, 'category'),
+      slug: getSingleQueryParam(searchParams, 'slug'),
+      sortBy: getSingleQueryParam(searchParams, 'sortBy'),
+    });
 
     const result = await listSalons({
-      page,
-      limit,
-      city,
-      area,
-      state,
-      isVerified,
-      search,
-      slug,
-      sortBy,
+      ...params,
       isActive: true, // Public endpoint only shows active salons
     });
 
@@ -188,13 +170,34 @@ export async function GET(request: NextRequest) {
       },
       { status: 200 }
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof ZodError || error instanceof Error && error.message.startsWith('Duplicate query parameter:')) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'Invalid salon search parameters' } },
+        { status: 400 }
+      );
+    }
+    const errorName = error instanceof Error ? error.name : 'UnknownError';
+    console.error('Salon discovery request failed:', errorName);
+    if (errorName === 'MongooseServerSelectionError' || errorName === 'MongoNetworkError') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'DATABASE_UNAVAILABLE',
+            message: 'Salon listings are temporarily unavailable because the database cannot be reached. Please try again later.',
+          },
+        },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json(
       {
         success: false,
         error: {
           code: 'INTERNAL_ERROR',
-          message: 'Failed to fetch salons',
+          message: 'Unable to load salon listings right now. Please try again later.',
         },
       },
       { status: 500 }

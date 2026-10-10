@@ -155,6 +155,7 @@ const ensureSalon = async (blueprint: DemoSalonBlueprint) => {
     rating: 4.6,
     reviewCount: 32,
     isVerified: true,
+    approvalStatus: 'APPROVED',
     isActive: true,
   });
 

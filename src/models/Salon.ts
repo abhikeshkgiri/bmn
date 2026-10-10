@@ -55,6 +55,10 @@ interface ISalon extends Document {
   reviewCount: number;
   isVerified: boolean;
   isActive: boolean;
+  approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  rejectionReason?: string | null;
+  approvalUpdatedAt?: Date | null;
+  approvalUpdatedBy?: Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -160,9 +164,15 @@ const LocationSchema = new Schema<ILocation>(
       required: true,
       validate: {
         validator: function (coords: number[]) {
-          return coords.length === 2;
+          return coords.length === 2 &&
+            Number.isFinite(coords[0]) &&
+            Number.isFinite(coords[1]) &&
+            coords[0] >= -180 &&
+            coords[0] <= 180 &&
+            coords[1] >= -90 &&
+            coords[1] <= 90;
         },
-        message: 'Coordinates must be [longitude, latitude]',
+        message: 'Coordinates must be [longitude, latitude] within valid geographic ranges',
       },
     },
   },
@@ -290,6 +300,26 @@ const SalonSchema = new Schema<ISalon>(
       type: Boolean,
       default: false,
       index: true,
+    },
+    approvalStatus: {
+      type: String,
+      enum: ['PENDING', 'APPROVED', 'REJECTED'],
+      index: true,
+    },
+    rejectionReason: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: 1000,
+    },
+    approvalUpdatedAt: {
+      type: Date,
+      default: null,
+    },
+    approvalUpdatedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
     isActive: {
       type: Boolean,

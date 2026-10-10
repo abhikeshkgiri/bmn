@@ -10,7 +10,7 @@ import Button from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Spinner } from '@/components/ui/Loading';
 import { MapPin, Star, Search } from 'lucide-react';
-import { getDemoDelhiSalons } from '@/lib/demo-delhi';
+import { getSupportedLaunchCity } from '@/constants/launch-cities';
 
 interface Salon {
   _id: string;
@@ -30,15 +30,17 @@ function SearchPageContent() {
   const searchParams = useSearchParams();
   const location = searchParams.get('location') || '';
   const q = searchParams.get('q') || '';
+  const service = searchParams.get('service') || '';
 
   const [salons, setSalons] = useState<Salon[]>([]);
-  const [loading, setLoading] = useState(!!location || !!q);
+  const [loading, setLoading] = useState(!!location || !!q || !!service);
   const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     const fetchSalons = async () => {
       try {
-        if (!location && !q) {
+        if (!location && !q && !service) {
           setSalons([]);
           setError(null);
           setLoading(false);
@@ -46,29 +48,22 @@ function SearchPageContent() {
         }
 
         const params = new URLSearchParams();
-        if (location) params.append('city', location);
+        if (location) {
+          params.append(getSupportedLaunchCity(location) ? 'city' : 'area', location);
+        }
         if (q) params.append('search', q);
+        if (service) params.append('serviceSearch', service.slice(0, 80));
         params.append('limit', '20');
 
-        try {
-          const response = await fetch(`/api/salons?${params}`);
-          const result = await response.json();
-
-          if (result.success && result.data?.length) {
-            setSalons(result.data || []);
-            setError(null);
-            setLoading(false);
-            return;
-          }
-        } catch {
-          // Fall through to demo data if MongoDB is unavailable
+        const response = await fetch(`/api/salons?${params}`);
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(`Salon search failed with status ${response.status}`);
         }
-
-        const demoSalons = getDemoDelhiSalons({ location, q, limit: 20 });
-        setSalons(demoSalons as unknown as Salon[]);
+        setSalons(Array.isArray(result.data) ? result.data : []);
         setError(null);
       } catch {
-        setError('Failed to load salons');
+        setError('Failed to load salons. Please try again.');
         setSalons([]);
       } finally {
         setLoading(false);
@@ -76,7 +71,7 @@ function SearchPageContent() {
     };
 
     fetchSalons();
-  }, [location, q]);
+  }, [location, q, service, retryKey]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -99,7 +94,7 @@ function SearchPageContent() {
               Login
             </Button>
           </Link>
-          <Link href="/signup">
+          <Link href="/signup/choose">
             <Button variant="primary" size="sm">
               Sign Up
             </Button>
@@ -112,9 +107,12 @@ function SearchPageContent() {
         <div className="mb-12">
           <h1 className="text-4xl font-bold text-brand-black mb-2">Search Results</h1>
           <p className="text-foreground-secondary text-lg">
-            {location || q ? (
+            {location || q || service ? (
               <>
-                Showing salons for <strong>&quot;{location || q}&quot;</strong>
+                Showing salons
+                {q && <> matching <strong>&quot;{q}&quot;</strong></>}
+                {service && <> offering <strong>&quot;{service}&quot;</strong></>}
+                {location && <> in <strong>&quot;{location}&quot;</strong></>}
               </>
             ) : (
               'Enter a location or service to search'
@@ -131,6 +129,7 @@ function SearchPageContent() {
                 type="text"
                 name="location"
                 defaultValue={location}
+                maxLength={80}
                 placeholder="Enter location"
                 className="w-full bg-transparent text-sm text-brand-black outline-none placeholder:text-foreground-secondary"
               />
@@ -142,8 +141,23 @@ function SearchPageContent() {
                 type="text"
                 name="q"
                 defaultValue={q}
-                placeholder="Search service or salon"
+                maxLength={100}
+                placeholder="Search salon name or area"
                 className="w-full bg-transparent text-sm text-brand-black outline-none placeholder:text-foreground-secondary"
+                aria-label="Search salon name or area"
+              />
+            </div>
+
+            <div className="flex flex-1 items-center gap-2 rounded-xl border border-border bg-neutral-50 px-3 py-2.5">
+              <Search size={18} className="text-brand-pink" />
+              <input
+                type="search"
+                name="service"
+                defaultValue={service}
+                maxLength={80}
+                placeholder="Search active services"
+                className="w-full bg-transparent text-sm text-brand-black outline-none placeholder:text-foreground-secondary"
+                aria-label="Search active salon services"
               />
             </div>
 
@@ -161,16 +175,24 @@ function SearchPageContent() {
         ) : error ? (
           <Card className="p-8 text-center">
             <p className="text-red-600 mb-4">{error}</p>
-            <Link href="/">
-              <Button variant="primary">Back to Home</Button>
-            </Link>
+            <div className="flex justify-center gap-3">
+              <Button variant="primary" onClick={() => setRetryKey((key) => key + 1)}>Try again</Button>
+              <Link href="/"><Button variant="outline">Back to Home</Button></Link>
+            </div>
           </Card>
         ) : salons.length === 0 ? (
           <Card className="p-8 text-center">
             <p className="text-foreground-secondary mb-4 text-lg">
-              {location || q
-                ? `No salons found for "${location || q}"`
-                : 'Enter a location or service to search'}
+              {location || q || service ? (
+                <>
+                  No salons found
+                  {q && <> matching <strong>&quot;{q}&quot;</strong></>}
+                  {service && <> offering <strong>&quot;{service}&quot;</strong></>}
+                  {location && <> in <strong>&quot;{location}&quot;</strong></>}
+                </>
+              ) : (
+                'Enter a location or service to search'
+              )}
             </p>
             <Link href="/">
               <Button variant="primary">Back to Home</Button>
@@ -202,15 +224,19 @@ function SearchPageContent() {
                     </p>
                   )}
 
-                  <div className="flex items-center gap-2 mt-2">
-                    <div className="flex items-center gap-1 rounded-lg bg-neutral-50 px-2 py-1 text-sm font-semibold text-brand-black">
-                      <Star size={13} className="fill-yellow-400 text-yellow-400" />
-                      {salon.rating ?? 0}
+                  {salon.rating !== undefined && salon.rating > 0 && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <div className="flex items-center gap-1 rounded-lg bg-neutral-50 px-2 py-1 text-sm font-semibold text-brand-black">
+                        <Star size={13} className="fill-yellow-400 text-yellow-400" />
+                        {salon.rating}
+                      </div>
+                      {salon.reviewCount !== undefined && salon.reviewCount > 0 && (
+                        <span className="text-xs text-foreground-secondary">
+                          ({salon.reviewCount} reviews)
+                        </span>
+                      )}
                     </div>
-                    <span className="text-xs text-foreground-secondary">
-                      ({salon.reviewCount ?? 0} reviews)
-                    </span>
-                  </div>
+                  )}
 
                   <div className="mt-auto grid grid-cols-2 gap-2 pt-2">
                     <Link href={`/salons/${salon.slug}`}>

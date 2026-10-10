@@ -32,7 +32,7 @@ const brandHighlights = [
   { title: 'No Waiting', description: 'Walk in at your booked time and get served right away.', icon: BadgeCheck },
 ];
 
-export default function OtpSignupForm({ barber = false }: { barber?: boolean }) {
+export default function OtpSignupForm({ salonOwner = false }: { salonOwner?: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [step, setStep] = useState<SignupStepType>('phone');
@@ -111,7 +111,8 @@ export default function OtpSignupForm({ barber = false }: { barber?: boolean }) 
     if (!isValidIndianPhoneNumber(phone)) return setError('Enter a valid Indian mobile number');
     setLoading(true);
     try {
-      const response = await fetch('/api/auth/send-otp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) });
+      const endpoint = salonOwner ? '/api/auth/send-salon-owner-otp' : '/api/auth/send-otp';
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to send OTP');
       setDevOtp(result.devOtp || null);
@@ -129,7 +130,18 @@ export default function OtpSignupForm({ barber = false }: { barber?: boolean }) 
       const response = await fetch('/api/auth/verify-otp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, otp }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to verify OTP');
-      if (barber) { router.replace('/barber/onboarding'); return; }
+      const role = result?.user?.role as string | undefined;
+      if (role === 'ADMIN' || role === 'SUPER_ADMIN') { router.replace('/admin'); return; }
+      if (role === 'SALON_OWNER') {
+        const profileResponse = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), email: email.trim() || undefined }) });
+        if (!profileResponse.ok) throw new Error('Account created but profile setup failed');
+        router.replace(salonOwner ? '/salon/onboarding' : '/dashboard/salon');
+        return;
+      }
+      if (role === 'SALON_STAFF') { router.replace('/dashboard/salon'); return; }
+      if (role === 'BARBER') { router.replace('/dashboard/barber'); return; }
+      if (salonOwner) throw new Error('This phone number already belongs to a customer account. Sign in with that account or use a different number.');
+      if (role !== 'CUSTOMER') throw new Error('This account cannot use customer signup.');
       const profileResponse = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), email: email.trim() || undefined }) });
       if (!profileResponse.ok) throw new Error('Account created but profile setup failed');
       router.replace(nextPath);
@@ -174,10 +186,10 @@ export default function OtpSignupForm({ barber = false }: { barber?: boolean }) 
                 {step === 'phone' ? <Smartphone size={26} /> : <ShieldCheck size={26} />}
               </div>
               <h2 className="text-2xl font-bold text-brand-black sm:text-3xl">
-                {step === 'phone' ? (barber ? 'Join as a Barber' : 'Create your account') : 'Verify your number'}
+                {step === 'phone' ? (salonOwner ? 'Register as a Salon Owner' : 'Create your customer account') : 'Verify your number'}
               </h2>
               <p className="mt-2 text-foreground-secondary">
-                {step === 'phone' ? (barber ? 'Start your barber onboarding on BookMyNai' : 'Create a BookMyNai customer account') : `We sent a 6-digit code to ${phone}`}
+                {step === 'phone' ? (salonOwner ? 'Verify your number to register your salon business' : 'Create a BookMyNai customer account') : `We sent a 6-digit code to ${phone}`}
               </p>
             </div>
 
@@ -219,7 +231,6 @@ export default function OtpSignupForm({ barber = false }: { barber?: boolean }) 
 
             <div className="mt-8 border-t border-border pt-6 text-center">
               <p className="text-sm text-foreground-secondary">Already have an account? <Link href="/login" className="font-semibold text-brand-pink">Sign in</Link></p>
-              {barber && <p className="mt-2 text-sm text-foreground-secondary"><Link href="/login" className="font-semibold text-brand-pink">Return to customer login</Link></p>}
             </div>
           </Card>
           <p className="mt-6 flex items-center justify-center gap-2 text-xs text-foreground-secondary"><ShieldCheck size={14} className="text-brand-pink" />Your details are encrypted and never shared.</p>

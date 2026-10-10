@@ -1,6 +1,5 @@
-import { Suspense } from 'react';
-import OtpSignupForm from '@/components/auth/OtpSignupForm';
+import { redirect } from 'next/navigation';
 
 export default function BarberSignupPage() {
-  return <Suspense fallback={<main className="mx-auto max-w-lg p-8">Loading barber signup...</main>}><OtpSignupForm barber /></Suspense>;
+  redirect('/salon/signup');
 }

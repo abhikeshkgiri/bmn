@@ -3,9 +3,10 @@ import {
   createService,
   listServices,
 } from '@/services/service.service';
-import { requireAuth } from '@/lib/auth';
+import { getCurrentUser, requireAuth } from '@/lib/auth';
 import { ServiceCreateSchema } from '@/validations/service.schema';
 import { ZodError } from 'zod';
+import { USER_ROLES } from '@/constants/roles';
 
 /**
  * POST /api/services
@@ -119,6 +120,16 @@ export async function GET(request: NextRequest) {
     const pageParam = searchParams.get('page');
     const limitParam = searchParams.get('limit');
     const sortBy = searchParams.get('sortBy') as 'createdAt' | 'name' | 'price' | 'duration' | undefined;
+    const currentUser = await getCurrentUser();
+    const canManageServices = currentUser?.role === USER_ROLES.SALON_OWNER ||
+      currentUser?.role === USER_ROLES.ADMIN ||
+      currentUser?.role === USER_ROLES.SUPER_ADMIN;
+    if (isActiveParam === 'false' && !canManageServices) {
+      return NextResponse.json(
+        { success: false, error: { code: 'FORBIDDEN', message: 'Authentication is required to view inactive services.' } },
+        { status: 403 }
+      );
+    }
 
     // Validate and parse pagination
     let page = 1;
@@ -152,8 +163,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // For public users, only show active services
-    const isActive = isActiveParam !== 'false'; // Default to true unless explicitly false
+    const isActive = isActiveParam === null ? undefined : isActiveParam === 'true';
 
     // Fetch services
     const { data, pagination } = await listServices({
@@ -164,7 +174,7 @@ export async function GET(request: NextRequest) {
       page,
       limit,
       sortBy,
-    });
+    }, currentUser || undefined);
 
     return NextResponse.json(
       {
@@ -176,6 +186,12 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to fetch services';
+    if (message.includes('SERVICE_ACCESS_DENIED')) {
+      return NextResponse.json(
+        { success: false, error: { code: 'FORBIDDEN', message: 'You do not have access to these salon services.' } },
+        { status: 403 }
+      );
+    }
 
     return NextResponse.json(
       {

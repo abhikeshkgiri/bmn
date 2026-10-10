@@ -9,8 +9,10 @@ import Salon from '@/models/Salon';
 import User from '@/models/User';
 import { USER_ROLES } from '@/constants/roles';
 import type { AuthUser } from '@/types';
-import type { ServiceCreateInput, ServiceUpdateInput } from '@/validations/service.schema';
+import { isDiscountPriceValid, type ServiceCreateInput, type ServiceUpdateInput } from '@/validations/service.schema';
 import type { IService } from '@/models/Service';
+import { getSupportedSalonLocationFilter, normalizeSupportedSalonLocation } from '@/constants/launch-cities';
+import { APPROVED_SALON_STATUS_FILTER, isSalonApproved } from '@/utils/salon-approval';
 
 export interface ListServicesOptions {
   salonId?: string;
@@ -125,7 +127,7 @@ export async function createService(
     image: input.image || null,
     duration: input.duration,
     price: input.price,
-    discountPrice: input.discountPrice || null,
+    discountPrice: input.discountPrice ?? null,
     isActive: true,
   });
 
@@ -149,51 +151,22 @@ export async function getServiceById(
     return null;
   }
 
-  // If not authenticated, only allow viewing active services
-  if (!currentUser) {
-    if (!service.isActive) {
-      return null;
-    }
-    return service;
-  }
+  const salon = typeof service.salon === 'object' ? service.salon : await Salon.findById(service.salon);
+  if (!salon) return null;
+  const isAdmin = currentUser?.role === USER_ROLES.ADMIN || currentUser?.role === USER_ROLES.SUPER_ADMIN;
+  const isOwner = currentUser?.role === USER_ROLES.SALON_OWNER && salon.owner.toString() === currentUser._id;
+  const isStaff = currentUser?.role === USER_ROLES.SALON_STAFF && salon.staff?.some((staffId: { toString(): string }) => staffId.toString() === currentUser._id);
+  const isPublished = salon.isActive && isSalonApproved(salon) &&
+    Boolean(normalizeSupportedSalonLocation(salon.address.city, salon.address.state));
 
-  // If authenticated, check if user can view inactive services
-  if (!service.isActive) {
-    // ADMIN/SUPER_ADMIN can view all services
-    if (
-      currentUser.role === USER_ROLES.ADMIN ||
-      currentUser.role === USER_ROLES.SUPER_ADMIN
-    ) {
-      return service;
-    }
-
-    // SALON_OWNER can view inactive services only if they own the salon
-    if (currentUser.role === USER_ROLES.SALON_OWNER) {
-      const salon = typeof service.salon === 'object' ? service.salon : await Salon.findById(service.salon);
-      if (salon && salon.owner.toString() === currentUser._id) {
-        return service;
-      }
-    }
-
-    // SALON_STAFF can view inactive services if assigned to the salon
-    if (currentUser.role === USER_ROLES.SALON_STAFF) {
-      const salon = typeof service.salon === 'object' ? service.salon : await Salon.findById(service.salon);
-      if (salon && salon.staff?.includes(currentUser._id)) {
-        return service;
-      }
-    }
-
-    // Otherwise, don't show inactive services
-    return null;
-  }
-
-  return service;
+  if (isAdmin || isOwner || isStaff) return service;
+  return service.isActive && isPublished ? service : null;
 }
 
 /**
  * List services with pagination, filtering, and search
  */
-export async function listServices(options: ListServicesOptions = {}): Promise<{
+export async function listServices(options: ListServicesOptions = {}, currentUser?: AuthUser): Promise<{
   data: IService[];
   pagination: PaginationData;
 }> {
@@ -202,7 +175,7 @@ export async function listServices(options: ListServicesOptions = {}): Promise<{
   const {
     salonId,
     category,
-    isActive = true,
+    isActive,
     search = '',
     page = 1,
     limit = 10,
@@ -215,17 +188,42 @@ export async function listServices(options: ListServicesOptions = {}): Promise<{
 
   // Build query
   const query: Record<string, unknown> = {};
+  const isAdmin = currentUser?.role === USER_ROLES.ADMIN || currentUser?.role === USER_ROLES.SUPER_ADMIN;
+  const isOwner = currentUser?.role === USER_ROLES.SALON_OWNER;
 
-  if (salonId) {
-    query.salon = salonId;
+  if (isOwner) {
+    const ownedSalon = salonId
+      ? await Salon.findById(salonId).select('_id owner').lean()
+      : await Salon.findOne({ owner: currentUser!._id }).select('_id owner').lean();
+    if (ownedSalon && ownedSalon.owner.toString() !== currentUser!._id) {
+      throw new Error('SERVICE_ACCESS_DENIED: You do not own this salon');
+    }
+    query.salon = ownedSalon?._id ?? null;
+  } else if (isAdmin) {
+    if (salonId) query.salon = salonId;
+  } else {
+    const supportedLocation = getSupportedSalonLocationFilter();
+    const publishedSalonIds = supportedLocation
+      ? await Salon.find({
+          isActive: true,
+          isVerified: true,
+          approvalStatus: APPROVED_SALON_STATUS_FILTER,
+          ...supportedLocation,
+        }).distinct('_id')
+      : [];
+    query.salon = salonId
+      ? { $in: publishedSalonIds.filter((id) => id.toString() === salonId) }
+      : { $in: publishedSalonIds };
   }
 
   if (category) {
     query.category = category;
   }
 
-  if (isActive !== undefined) {
-    query.isActive = isActive;
+  if (isAdmin || isOwner) {
+    if (isActive !== undefined) query.isActive = isActive;
+  } else {
+    query.isActive = true;
   }
 
   // Search in name and description
@@ -311,6 +309,14 @@ export async function updateService(
     throw new Error('SERVICE_ACCESS_DENIED: You can only update your own salon services');
   }
 
+  const nextPrice = input.price ?? service.price;
+  const nextDiscountPrice = input.discountPrice !== undefined
+    ? input.discountPrice
+    : service.discountPrice;
+  if (!isDiscountPriceValid(nextPrice, nextDiscountPrice)) {
+    throw new Error('SERVICE_INVALID_DISCOUNT_PRICE: Discount price must not exceed regular price');
+  }
+
   // Update allowed fields only
   if (input.name) {
     service.name = input.name;
@@ -339,7 +345,7 @@ export async function updateService(
   }
 
   if (input.discountPrice !== undefined) {
-    service.discountPrice = input.discountPrice || null;
+    service.discountPrice = input.discountPrice ?? null;
   }
 
   await service.save();

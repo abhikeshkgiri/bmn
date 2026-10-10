@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { BARBER_SPECIALIZATION_ARRAY } from '@/constants/services';
 
+const objectId = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid MongoDB ObjectId');
+
 /**
  * Portfolio item schema
  */
@@ -15,14 +17,14 @@ export const PortfolioItemSchema = z.object({
  * Used when salon owner creates a barber
  */
 export const BarberCreateSchema = z.object({
-  salonId: z.string().length(24, 'Invalid salon ID'),
-  userId: z.string().length(24, 'Invalid user ID'),
-  name: z.string().min(2, 'Name must be at least 2 characters').max(100, 'Name must not exceed 100 characters'),
+  salonId: objectId,
+  userId: objectId,
+  name: z.string().trim().min(2, 'Name must be at least 2 characters').max(100, 'Name must not exceed 100 characters'),
   bio: z.string().optional(),
   profileImage: z.string().url('Profile image must be a valid URL').optional(),
   experienceYears: z.number().min(0, 'Experience must be >= 0').max(60, 'Experience must be <= 60'),
   specializations: z.array(z.enum(BARBER_SPECIALIZATION_ARRAY as [string, ...string[]])).default([]),
-  services: z.array(z.string().length(24, 'Invalid service ID')).default([]),
+  services: z.array(objectId).default([]),
   portfolio: z.array(PortfolioItemSchema).optional(),
   offersHomeService: z.boolean().default(false),
   homeServiceRadius: z.number().min(1, 'Radius must be >= 1 km').max(100, 'Radius must be <= 100 km').optional(),
@@ -33,12 +35,12 @@ export const BarberCreateSchema = z.object({
  * For updates by salon owner or barber
  */
 export const BarberUpdateSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters').max(100, 'Name must not exceed 100 characters').optional(),
+  name: z.string().trim().min(2, 'Name must be at least 2 characters').max(100, 'Name must not exceed 100 characters').optional(),
   bio: z.string().optional(),
   profileImage: z.string().url('Profile image must be a valid URL').optional(),
   experienceYears: z.number().min(0, 'Experience must be >= 0').max(60, 'Experience must be <= 60').optional(),
   specializations: z.array(z.enum(BARBER_SPECIALIZATION_ARRAY as [string, ...string[]])).optional(),
-  services: z.array(z.string().length(24, 'Invalid service ID')).optional(),
+  services: z.array(objectId).optional(),
   portfolio: z.array(PortfolioItemSchema).optional(),
   offersHomeService: z.boolean().optional(),
   homeServiceRadius: z.number().min(1, 'Radius must be >= 1 km').max(100, 'Radius must be <= 100 km').optional(),

@@ -1,50 +1,53 @@
 import { z } from 'zod';
 import { SERVICE_CATEGORY_ARRAY } from '@/constants/services';
 
+const objectId = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid MongoDB ObjectId');
+const serviceName = z.string().trim().min(2).max(100);
+const serviceDescription = z.string().trim().max(2000).optional();
+const servicePrice = z.number().int().min(0);
+const serviceDuration = z.number().int().min(15).max(480);
+
+export function isDiscountPriceValid(price: number, discountPrice?: number | null): boolean {
+  return discountPrice == null || discountPrice <= price;
+}
+
 export const ServiceCreateSchema = z
   .object({
-    salonId: z.string().min(24).max(24), // MongoDB ObjectId
-    name: z.string().min(2).max(100),
-    description: z.string().optional(),
+    salonId: objectId,
+    name: serviceName,
+    description: serviceDescription,
     category: z.enum(SERVICE_CATEGORY_ARRAY as [string, ...string[]]),
     image: z.string().url().optional(),
-    duration: z.number().int().min(5).max(480), // 5 to 480 minutes
-    price: z.number().int().min(1), // At least 1 paise (₹0.01)
+    duration: serviceDuration,
+    price: servicePrice,
     discountPrice: z.number().int().min(0).optional(),
   })
-  .refine((data) => {
-    // If discountPrice is provided, ensure it's less than price
-    if (data.discountPrice !== undefined && data.discountPrice > 0) {
-      return data.discountPrice < data.price;
-    }
-    return true;
-  }, {
-    message: 'Discount price must be less than regular price',
-    path: ['discountPrice'],
-  });
+  .refine(
+    (data) => isDiscountPriceValid(data.price, data.discountPrice),
+    {
+      message: 'Discount price must not exceed regular price',
+      path: ['discountPrice'],
+    },
+  );
 
 export const ServiceUpdateSchema = z
   .object({
-    name: z.string().min(2).max(100).optional(),
-    description: z.string().optional(),
+    name: serviceName.optional(),
+    description: serviceDescription,
     category: z.enum(SERVICE_CATEGORY_ARRAY as [string, ...string[]]).optional(),
     image: z.string().url().optional(),
-    duration: z.number().int().min(5).max(480).optional(),
-    price: z.number().int().min(1).optional(),
+    duration: serviceDuration.optional(),
+    price: servicePrice.optional(),
     discountPrice: z.number().int().min(0).optional(),
   })
   .refine(
     (data) => {
-      // If both price and discountPrice are provided, validate the relationship
-      if (data.price !== undefined && data.discountPrice !== undefined && data.discountPrice > 0) {
-        return data.discountPrice < data.price;
-      }
-      return true;
+      return data.price === undefined || isDiscountPriceValid(data.price, data.discountPrice);
     },
     {
-      message: 'Discount price must be less than regular price',
+      message: 'Discount price must not exceed regular price',
       path: ['discountPrice'],
-    }
+    },
   );
 
 export const ServiceStatusSchema = z.object({

@@ -4,6 +4,100 @@
  */
 
 import { DEFAULT_SLOT_INTERVAL_MINUTES, DEFAULT_OPENING_TIME, DEFAULT_CLOSING_TIME } from '@/constants/booking-config';
+import { BOOKING_STATUS } from '@/constants/booking';
+import type { Types } from 'mongoose';
+
+export function activeBookingFilter(now = new Date()) {
+  return {
+    $or: [
+      { status: BOOKING_STATUS.CONFIRMED },
+      { status: BOOKING_STATUS.IN_PROGRESS },
+      { status: BOOKING_STATUS.PENDING, holdExpiresAt: { $gt: now } },
+    ],
+  };
+}
+
+export function createExpiredBookingHoldFilter(salonId: Types.ObjectId, now = new Date()) {
+  return {
+    salon: salonId,
+    status: BOOKING_STATUS.PENDING,
+    holdExpiresAt: { $lte: now },
+  };
+}
+
+export function unexpiredPendingBookingFilter(now = new Date()) {
+  return {
+    status: BOOKING_STATUS.PENDING,
+    holdExpiresAt: { $gt: now },
+  };
+}
+
+export function isBookingHoldExpired(holdExpiresAt: Date | null | undefined, now = new Date()): boolean {
+  return holdExpiresAt != null && holdExpiresAt <= now;
+}
+
+export function parseLocalCalendarDate(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date;
+}
+
+export function isWithinOpeningHours(
+  isOpen: boolean,
+  openingTime: string,
+  closingTime: string,
+  startTime: string,
+  durationMinutes: number,
+  slotIntervalMinutes?: number,
+): boolean {
+  if (
+    !isOpen ||
+    !isValidTimeFormat(openingTime) ||
+    !isValidTimeFormat(closingTime) ||
+    !isValidTimeFormat(startTime) ||
+    !Number.isInteger(durationMinutes) ||
+    durationMinutes <= 0
+  ) {
+    return false;
+  }
+  const start = timeToMinutes(startTime);
+  const opening = timeToMinutes(openingTime);
+  return start >= opening &&
+    (slotIntervalMinutes === undefined ||
+      (Number.isInteger(slotIntervalMinutes) &&
+        slotIntervalMinutes > 0 &&
+        (start - opening) % slotIntervalMinutes === 0)) &&
+    start + durationMinutes <= timeToMinutes(closingTime);
+}
+
+export function isBookingStatusTransitionAllowed(from: string, to: string): boolean {
+  const transitions: Record<string, readonly string[]> = {
+    [BOOKING_STATUS.PENDING]: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.CANCELLED],
+    [BOOKING_STATUS.CONFIRMED]: [
+      BOOKING_STATUS.IN_PROGRESS,
+      BOOKING_STATUS.CANCELLED,
+      BOOKING_STATUS.NO_SHOW,
+    ],
+    [BOOKING_STATUS.IN_PROGRESS]: [BOOKING_STATUS.COMPLETED, BOOKING_STATUS.NO_SHOW],
+    [BOOKING_STATUS.COMPLETED]: [],
+    [BOOKING_STATUS.CANCELLED]: [],
+    [BOOKING_STATUS.NO_SHOW]: [],
+  };
+  return transitions[from]?.includes(to) ?? false;
+}
 
 /**
  * Validate time format (HH:MM)

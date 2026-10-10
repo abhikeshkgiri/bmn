@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { connectDB } from '@/lib/db';
 import User from '@/models/User';
 import Salon from '@/models/Salon';
+import AuditLog from '@/models/AuditLog';
 import Barber from '@/models/Barber';
 import Booking from '@/models/Booking';
 import Review from '@/models/Review';
@@ -12,6 +13,8 @@ import { USER_ROLES } from '@/constants/roles';
 import { REVIEW_STATUS } from '@/constants/reviews';
 import type { AuthUser } from '@/types';
 import { recordAuditEvent } from '@/services/audit.service';
+import { normalizeSupportedSalonLocation, UNSUPPORTED_CITY_MESSAGE } from '@/constants/launch-cities';
+import { APPROVED_SALON_STATUS_FILTER } from '@/utils/salon-approval';
 
 export class AdminInputError extends Error {
   constructor(message: string) {
@@ -42,7 +45,12 @@ export async function getAdminDashboardStats() {
     Booking.countDocuments(),
     Booking.countDocuments({ status: BOOKING_STATUS.COMPLETED }),
     Booking.countDocuments({ status: BOOKING_STATUS.CANCELLED }),
-    Salon.countDocuments({ isVerified: false, isActive: true }),
+    Salon.countDocuments({
+      $or: [
+        { approvalStatus: 'PENDING' },
+        { approvalStatus: { $exists: false }, isVerified: false, isActive: true },
+      ],
+    }),
     Barber.countDocuments({ isVerified: false, isActive: true }),
     Review.countDocuments({ status: 'PENDING' }),
     CustomerMembership.countDocuments({ status: 'ACTIVE' }),
@@ -104,29 +112,76 @@ export async function listUsers(options: {
   return { users, total, page, limit, pages: Math.ceil(total / limit) || 1 };
 }
 
-export async function listSalonsForAdmin(options: { page?: number; limit?: number; search?: string; status?: string }) {
+export async function listSalonsForAdmin(options: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  status?: string;
+  city?: string;
+  from?: Date;
+  to?: Date;
+}) {
   await connectDB();
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.min(Math.max(1, options.limit ?? 10), 50);
   const skip = (page - 1) * limit;
 
   const query: Record<string, unknown> = {};
-  if (options.status === 'pending') query.isVerified = false;
-  if (options.status === 'active') query.isActive = true;
+  if (options.status === 'pending') {
+    query.$and = [{ $or: [{ approvalStatus: 'PENDING' }, { approvalStatus: { $exists: false }, isVerified: false }] }];
+  } else if (options.status === 'active') {
+    query.approvalStatus = APPROVED_SALON_STATUS_FILTER;
+    query.isVerified = true;
+    query.isActive = true;
+  } else if (options.status === 'rejected') {
+    query.approvalStatus = 'REJECTED';
+  }
+  if (options.city) query['address.city'] = { $regex: options.city, $options: 'i' };
+  if (options.from || options.to) {
+    query.createdAt = {
+      ...(options.from ? { $gte: options.from } : {}),
+      ...(options.to ? { $lte: options.to } : {}),
+    };
+  }
   if (options.search) {
     query.$or = [
       { name: { $regex: options.search, $options: 'i' } },
       { slug: { $regex: options.search, $options: 'i' } },
       { 'address.city': { $regex: options.search, $options: 'i' } },
+      { 'address.area': { $regex: options.search, $options: 'i' } },
     ];
   }
 
   const [salons, total] = await Promise.all([
-    Salon.find(query).populate('owner', 'name phone role isActive').sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Salon.find(query)
+      .populate('owner', 'name phone email role isActive')
+      .populate('services', 'name price duration isActive')
+      .populate('barbers', 'name slug profileImage experienceYears isVerified isActive')
+      .sort({ createdAt: -1 }).skip(skip).limit(limit),
     Salon.countDocuments(query),
   ]);
 
   return { salons, total, page, limit, pages: Math.ceil(total / limit) || 1 };
+}
+
+export async function getSalonAdminDetails(salonId: string) {
+  await connectDB();
+  if (!Types.ObjectId.isValid(salonId)) throw new AdminInputError('Invalid salon id');
+
+  const [salon, history] = await Promise.all([
+    Salon.findById(salonId)
+      .populate('owner', 'name phone email role isActive')
+      .populate('services', 'name description price duration category isActive')
+      .populate('barbers', 'name slug profileImage bio experienceYears specializations isVerified isActive')
+      .populate('approvalUpdatedBy', 'name role'),
+    AuditLog.find({ entityType: 'Salon', entityId: new Types.ObjectId(salonId) })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .populate('actorId', 'name role'),
+  ]);
+
+  if (!salon) throw new Error('SALON_NOT_FOUND');
+  return { salon, history };
 }
 
 export async function listBarbersForAdmin(options: { page?: number; limit?: number; search?: string; status?: string }) {
@@ -285,10 +340,18 @@ export async function updateUserStatusAsAdmin(actor: AuthUser, userId: string, i
 export async function updateSalonVerification(actor: AuthUser, salonId: string, isVerified: boolean, reason?: string) {
   await connectDB();
   if (!Types.ObjectId.isValid(salonId)) throw new AdminInputError('Invalid salon id');
+  if (!isVerified && !reason?.trim()) throw new AdminInputError('A rejection reason is required');
   const salon = await Salon.findById(salonId);
   if (!salon) throw new Error('SALON_NOT_FOUND');
+  if (isVerified && !normalizeSupportedSalonLocation(salon.address.city, salon.address.state)) {
+    throw new Error(`CITY_NOT_SUPPORTED: ${UNSUPPORTED_CITY_MESSAGE}`);
+  }
   salon.isVerified = isVerified;
   salon.isActive = isVerified;
+  salon.approvalStatus = isVerified ? 'APPROVED' : 'REJECTED';
+  salon.rejectionReason = isVerified ? null : reason!.trim();
+  salon.approvalUpdatedAt = new Date();
+  salon.approvalUpdatedBy = new Types.ObjectId(actor._id);
   await salon.save();
   await recordAuditEvent({ actor, action: isVerified ? 'SALON_APPROVED' : 'SALON_REJECTED', entityType: 'Salon', entityId: salonId, metadata: reason ? { reason } : undefined });
   return salon;

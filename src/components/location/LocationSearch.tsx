@@ -9,6 +9,8 @@ import { useState } from 'react';
 import Button from '@/components/ui/Button';
 import CurrentLocationButton from './CurrentLocationButton';
 import { MapPin, Search } from 'lucide-react';
+import { SUPPORTED_LAUNCH_CITIES } from '@/constants/launch-cities';
+import { isValidCoordinates } from '@/utils/distance';
 
 interface LocationSearchProps {
   onSearch?: (latitude: number, longitude: number, radius: number) => void;
@@ -25,14 +27,6 @@ const RADIUS_OPTIONS = [
   { value: '50', label: '50 km' },
 ];
 
-const CITY_OPTIONS = [
-  { value: '', label: 'Enter city...' },
-  { value: 'Delhi', label: 'Delhi' },
-  { value: 'Mumbai', label: 'Mumbai' },
-  { value: 'Bengaluru', label: 'Bengaluru' },
-  { value: 'Kolkata', label: 'Kolkata' },
-];
-
 export default function LocationSearch({ onSearch, onCityAreaSearch, loading = false }: LocationSearchProps) {
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
@@ -40,8 +34,16 @@ export default function LocationSearch({ onSearch, onCityAreaSearch, loading = f
   const [city, setCity] = useState('');
   const [area, setArea] = useState('');
   const [searchMode, setSearchMode] = useState<'location' | 'city'>('location');
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   const handleLocationReceived = (lat: number, lng: number) => {
+    if (!isValidCoordinates(lat, lng)) {
+      setLocationError('Your device returned invalid coordinates. Choose a supported city and area instead.');
+      setLatitude(null);
+      setLongitude(null);
+      return;
+    }
+    setLocationError(null);
     setLatitude(lat);
     setLongitude(lng);
     setSearchMode('location');
@@ -49,12 +51,21 @@ export default function LocationSearch({ onSearch, onCityAreaSearch, loading = f
 
   const handleLocationSearch = () => {
     if (latitude !== null && longitude !== null && onSearch) {
+      if (!isValidCoordinates(latitude, longitude)) {
+        setLocationError('The selected coordinates are invalid. Detect your location again or search by city.');
+        return;
+      }
+      setLocationError(null);
       onSearch(latitude, longitude, parseFloat(radius));
     }
   };
 
   const handleCitySearch = async () => {
     if (!city) return;
+    setLatitude(null);
+    setLongitude(null);
+    setLocationError(null);
+    setSearchMode('city');
     if (onCityAreaSearch) {
       onCityAreaSearch(city, area);
       return;
@@ -82,27 +93,37 @@ export default function LocationSearch({ onSearch, onCityAreaSearch, loading = f
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             <select
               value={city}
+              aria-label="Choose a supported launch city"
               onChange={(e) => setCity(e.target.value)}
               disabled={loading}
               className="px-3 py-2 border border-border rounded-lg bg-white text-foreground"
             >
-              {CITY_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
+              <option value="">Choose a launch city</option>
+              {SUPPORTED_LAUNCH_CITIES.map(({ city: cityName, state }) => (
+                <option key={cityName} value={cityName}>
+                  {cityName}, {state}
                 </option>
               ))}
             </select>
             <input
               value={area}
+              aria-label="Filter by area or locality"
               onChange={(e) => setArea(e.target.value)}
+              maxLength={80}
               disabled={loading}
               className="px-3 py-2 border border-border rounded-lg bg-white text-foreground"
               placeholder="Locality / area (optional)"
             />
           </div>
+          {city && (
+            <p className="text-xs text-foreground-secondary">
+              State / UT: {SUPPORTED_LAUNCH_CITIES.find((option) => option.city === city)?.state}
+            </p>
+          )}
           <Button
             variant="primary"
             size="sm"
+            aria-label="Search by city and area"
             onClick={handleCitySearch}
             disabled={!city || loading}
             className="flex-shrink-0"
@@ -142,12 +163,14 @@ export default function LocationSearch({ onSearch, onCityAreaSearch, loading = f
         ) : null}
       </div>
 
+      {locationError && <p role="alert" className="text-sm text-error-600">{locationError}</p>}
+
       {/* Display current location info */}
       {latitude !== null && longitude !== null && (
         <div className="bg-blue-50 border border-blue-200 rounded p-2 text-xs text-blue-900">
-          <p className="flex items-center gap-2">
+          <p className="flex items-center gap-2" role="status">
             <MapPin size={14} />
-            Location: {latitude.toFixed(4)}, {longitude.toFixed(4)} (Radius: {radius} km)
+            Location detected. Search radius: {radius} km.
           </p>
         </div>
       )}

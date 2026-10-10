@@ -45,6 +45,7 @@ export default function SalonServicesPage() {
   const [salons, setSalons] = useState<Salon[]>([]);
   const [selectedSalonId, setSelectedSalonId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -59,29 +60,28 @@ export default function SalonServicesPage() {
     image: '',
   });
 
-  // Fetch user's salons
+  // Load only the authenticated owner's salon; public discovery omits pending salons.
   useEffect(() => {
-    const fetchSalons = async () => {
+    const fetchOwnerSalon = async () => {
       try {
-        const response = await fetch('/api/salons?limit=100');
+        const response = await fetch('/api/dashboard/salon/profile');
         const result = await response.json();
 
-        if (result.success) {
-          // Filter to current user's salons
-          const userSalons = result.data || [];
-          setSalons(userSalons);
-
-          if (userSalons.length > 0) {
-            setSelectedSalonId(userSalons[0]._id);
-          }
+        if (response.status === 404 && result?.error?.code === 'SALON_NOT_FOUND') {
+          router.replace('/salon/onboarding');
+          return;
         }
-      } catch {
-        console.error('Failed to fetch salons');
+        if (!response.ok || !result.success) throw new Error(result?.error?.message || 'Failed to load your salon.');
+        setSalons([result.data]);
+        setSelectedSalonId(result.data._id);
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Failed to load your salon.');
+        setLoading(false);
       }
     };
 
-    fetchSalons();
-  }, []);
+    void fetchOwnerSalon();
+  }, [router]);
 
   // Fetch services for selected salon
   useEffect(() => {
@@ -216,6 +216,10 @@ export default function SalonServicesPage() {
         </div>
       </div>
     );
+  }
+
+  if (loadError) {
+    return <div className="min-h-screen bg-white px-4 py-12"><Card className="mx-auto max-w-2xl p-8 text-center"><h1 className="text-2xl font-bold">Unable to load salon services</h1><p className="mt-3 text-foreground-secondary">{loadError}</p><Button className="mt-5" variant="outline" onClick={() => router.push('/salon/onboarding')}>Salon onboarding</Button></Card></div>;
   }
 
   return (

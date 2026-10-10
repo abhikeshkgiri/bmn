@@ -10,24 +10,34 @@ import Booking, { type IBooking } from '@/models/Booking';
 import Salon, { type ISalon } from '@/models/Salon';
 import Barber, { type IBarber } from '@/models/Barber';
 import Service, { type IService } from '@/models/Service';
+import User from '@/models/User';
 import Leave from '@/models/Leave';
 import { connectDB } from '@/lib/db';
 import type { AuthUser } from '@/types';
 import { BOOKING_STATUS, PAYMENT_STATUS, BOOKING_TYPE } from '@/constants/booking';
 import { USER_ROLES } from '@/constants/roles';
+import { isSalonApproved } from '@/utils/salon-approval';
 import {
   BOOKING_CANCELLATION_MINUTES,
   BOOKING_MAX_DAYS_AHEAD,
   BOOKING_MIN_DAYS_AHEAD,
 } from '@/constants/booking-config';
 import {
+  activeBookingFilter,
   isDateBookable,
   isAppointmentInPast,
   calculateEndTime,
   isTimeOverlap,
+  isValidTimeFormat,
   generateBookingNumberFormat,
   isValidTimeRange,
+  createExpiredBookingHoldFilter,
+  parseLocalCalendarDate,
+  isWithinOpeningHours,
+  isBookingStatusTransitionAllowed,
+  isBookingHoldExpired,
 } from '@/utils/booking';
+import { buildAvailabilitySlots } from '@/utils/booking-availability';
 import {
   notifyBookingCancelled,
   notifyBookingCreated,
@@ -38,24 +48,45 @@ import { recordAuditEvent } from '@/services/audit.service';
 import { calculateCheckoutPrice, reserveCouponUsage } from '@/services/pricing.service';
 import { redeemLoyaltyPoints, awardLoyaltyPoints, refundRedeemedPoints } from '@/services/loyalty.service';
 import { releaseCouponUsage } from '@/services/pricing.service';
+import {
+  getSupportedSalonLocationFilter,
+  isSupportedSalonLocation,
+} from '@/constants/launch-cities';
 
 const BOOKING_HOLD_MINUTES = 10;
 
-function activeBookingFilter(now = new Date()): Record<string, unknown> {
-  return {
-    $or: [
-      { status: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.IN_PROGRESS] } },
-      { status: BOOKING_STATUS.PENDING, holdExpiresAt: { $gt: now } },
-    ],
-  };
-}
-
-async function releaseExpiredBookingHolds(session?: mongoose.ClientSession): Promise<void> {
+async function releaseExpiredBookingHolds(
+  salonId: Types.ObjectId,
+  session?: mongoose.ClientSession,
+): Promise<void> {
   await Booking.updateMany(
-    { status: BOOKING_STATUS.PENDING, holdExpiresAt: { $lte: new Date() } },
+    createExpiredBookingHoldFilter(salonId),
     { $set: { status: BOOKING_STATUS.CANCELLED, cancellationReason: 'Payment hold expired' } },
     session ? { session } : undefined,
   );
+}
+
+async function lockEligibleSalonForBooking(
+  salonId: Types.ObjectId,
+  session: mongoose.ClientSession,
+): Promise<ISalon> {
+  const eligibilityFilter = {
+    _id: salonId,
+    isActive: true,
+    isVerified: true,
+    approvalStatus: { $in: ['APPROVED', null] },
+    ...getSupportedSalonLocationFilter(),
+  };
+  const update = await Salon.updateOne(
+    eligibilityFilter,
+    { $inc: { bookingLockVersion: 1 } },
+    { session },
+  );
+  if (update.matchedCount !== 1) throw BOOKING_ERRORS.INVALID_SALON;
+
+  const salon = await Salon.findOne(eligibilityFilter).session(session);
+  if (!salon) throw BOOKING_ERRORS.INVALID_SALON;
+  return salon;
 }
 
 /**
@@ -149,15 +180,27 @@ async function validateBookingRequest(payload: BookingCreatePayload): Promise<{
 }> {
   // Validate salon
   const salon = await Salon.findById(payload.salonId).select('+openingHours');
-  if (!salon || !salon.isActive) {
+  if (
+    !salon ||
+    !salon.isActive ||
+    !salon.isVerified ||
+    !isSalonApproved(salon) ||
+    !isSupportedSalonLocation(salon.address.city, salon.address.state)
+  ) {
     throw BOOKING_ERRORS.INVALID_SALON;
   }
 
   // Validate barber
   const barber = await Barber.findById(payload.barberId).populate('salon');
-  if (!barber || !barber.isActive) {
+  if (!barber || !barber.isActive || !barber.isVerified || !barber.isAvailable) {
     throw BOOKING_ERRORS.INVALID_BARBER;
   }
+  const barberAccount = await User.findOne({
+    _id: barber.user,
+    role: USER_ROLES.BARBER,
+    isActive: true,
+  }).select('_id');
+  if (!barberAccount) throw BOOKING_ERRORS.INVALID_BARBER;
 
   // Validate barber belongs to salon
   if (barber.salon._id.toString() !== payload.salonId) {
@@ -176,24 +219,26 @@ async function validateBookingRequest(payload: BookingCreatePayload): Promise<{
   }
 
   // Validate barber offers service
-  if (!barber.services.some((s: Types.ObjectId) => s.toString() === payload.serviceId)) {
+  if (!barber.services?.some((s: Types.ObjectId) => s.toString() === payload.serviceId)) {
     throw BOOKING_ERRORS.BARBER_DOES_NOT_OFFER_SERVICE;
   }
 
   // Validate booking type
-  if (payload.bookingType === BOOKING_TYPE.HOME_SERVICE) {
-    if (!barber.offersHomeService) {
-      throw BOOKING_ERRORS.HOME_SERVICE_NOT_AVAILABLE;
-    }
+  if (payload.bookingType !== BOOKING_TYPE.SALON) {
+    throw BOOKING_ERRORS.HOME_SERVICE_NOT_AVAILABLE;
   }
 
   // Validate time format
+  if (!isValidTimeFormat(payload.startTime)) {
+    throw BOOKING_ERRORS.INVALID_TIME;
+  }
   if (!isValidTimeRange(payload.startTime, calculateEndTime(payload.startTime, service.duration))) {
     throw BOOKING_ERRORS.INVALID_TIME;
   }
 
   // Validate appointment date
-  const appointmentDate = new Date(payload.appointmentDate);
+  const appointmentDate = parseLocalCalendarDate(payload.appointmentDate);
+  if (!appointmentDate) throw BOOKING_ERRORS.INVALID_DATE;
   if (!isDateBookable(appointmentDate, BOOKING_MIN_DAYS_AHEAD, BOOKING_MAX_DAYS_AHEAD)) {
     throw BOOKING_ERRORS.INVALID_DATE;
   }
@@ -202,6 +247,32 @@ async function validateBookingRequest(payload: BookingCreatePayload): Promise<{
   if (isAppointmentInPast(appointmentDate, payload.startTime)) {
     throw BOOKING_ERRORS.DATE_IN_PAST;
   }
+
+  const weekday = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][appointmentDate.getDay()];
+  const dayHours = salon.openingHours?.[weekday as keyof typeof salon.openingHours];
+  if (!dayHours || !isWithinOpeningHours(
+    dayHours.isOpen,
+    dayHours.openTime || '09:00',
+    dayHours.closeTime || '18:00',
+    payload.startTime,
+    service.duration,
+    salon.slotIntervalMinutes,
+  )) {
+    throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
+  }
+
+  const dayStart = new Date(appointmentDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+  const activeLeave = await Leave.findOne({
+    salon: salon._id,
+    active: true,
+    startDate: { $lt: dayEnd },
+    endDate: { $gt: dayStart },
+    $or: [{ barber: null }, { barber: barber._id }],
+  }).select('_id');
+  if (activeLeave) throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
 
   return {
     salon,
@@ -234,7 +305,9 @@ export async function getSalonDashboardStats(salonId: string, currentUser: AuthU
 
   const isOwner = salon.owner.toString() === currentUser._id;
   const isAdmin = [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(currentUser.role as typeof USER_ROLES.ADMIN);
-  if (currentUser.role !== USER_ROLES.SALON_OWNER && !isAdmin && !isOwner) {
+  const isStaff = currentUser.role === USER_ROLES.SALON_STAFF &&
+    salon.staff?.some((staffId: Types.ObjectId) => staffId.toString() === currentUser._id);
+  if (!isAdmin && !isOwner && !isStaff) {
     throw BOOKING_ERRORS.UNAUTHORIZED;
   }
 
@@ -286,15 +359,27 @@ export async function getSalonBookings(
 ): Promise<{ bookings: IBooking[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
   await connectDB();
 
-  const salon = await Salon.findOne({ owner: new Types.ObjectId(ownerId) });
-  if (!salon && currentUser.role !== USER_ROLES.ADMIN && currentUser.role !== USER_ROLES.SUPER_ADMIN) {
+  const isAdmin = currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN;
+  const isOwner = currentUser.role === USER_ROLES.SALON_OWNER;
+  const isStaff = currentUser.role === USER_ROLES.SALON_STAFF;
+  if ((isOwner || isStaff) && ownerId !== currentUser._id) {
+    throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
+  if (!isAdmin && !isOwner && !isStaff) {
+    throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
+
+  const salon = isStaff
+    ? await Salon.findOne({ staff: new Types.ObjectId(currentUser._id) })
+    : await Salon.findOne({ owner: new Types.ObjectId(ownerId) });
+  if (!salon && !isAdmin) {
     throw BOOKING_ERRORS.UNAUTHORIZED;
   }
 
   const targetSalonId = salon ? salon._id : undefined;
   const query: Record<string, unknown> = {};
 
-  if (currentUser.role === USER_ROLES.SALON_OWNER) {
+  if (isOwner || isStaff) {
     query.salon = salon!._id;
   } else if (currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN) {
     if (options.barberId) { query.barber = new Types.ObjectId(options.barberId); }
@@ -348,7 +433,12 @@ export async function getBarberDashboardStats(barberId: string, currentUser: Aut
     throw BOOKING_ERRORS.INVALID_BARBER;
   }
 
-  if (currentUser.role === USER_ROLES.BARBER) {
+  const isAdmin = currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN;
+  if (!isAdmin && currentUser.role !== USER_ROLES.BARBER) {
+    throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
+
+  if (!isAdmin) {
     const matchingBarber = await Barber.findOne({ _id: barberId, user: currentUser._id });
     if (!matchingBarber) {
       throw BOOKING_ERRORS.UNAUTHORIZED;
@@ -398,7 +488,12 @@ export async function getBarberBookings(
     throw BOOKING_ERRORS.INVALID_BARBER;
   }
 
-  if (currentUser.role === USER_ROLES.BARBER) {
+  const isAdmin = currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN;
+  if (!isAdmin && currentUser.role !== USER_ROLES.BARBER) {
+    throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
+
+  if (!isAdmin) {
     const matchedBarber = await Barber.findOne({ _id: barberId, user: currentUser._id });
     if (!matchedBarber) {
       throw BOOKING_ERRORS.UNAUTHORIZED;
@@ -442,7 +537,7 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
   }
 
   // Validate all prerequisites (non-atomic checks)
-  const { salon, service, appointmentDate } = await validateBookingRequest(payload);
+  const { service, appointmentDate } = await validateBookingRequest(payload);
   const price = await calculateCheckoutPrice({
     salonId: payload.salonId,
     serviceId: payload.serviceId,
@@ -463,18 +558,66 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
 
   try {
     await session.withTransaction(async () => {
-      await releaseExpiredBookingHolds(session);
+      await releaseExpiredBookingHolds(new Types.ObjectId(payload.salonId), session);
 
-      // A write to the salon document serializes capacity allocation for that salon.
-      await Salon.updateOne(
-        { _id: new Types.ObjectId(payload.salonId) },
-        { $inc: { bookingLockVersion: 1 } },
-        { session },
+      const transactionSalon = await lockEligibleSalonForBooking(
+        new Types.ObjectId(payload.salonId),
+        session,
       );
+      const currentService = await Service.findOne({
+        _id: service._id,
+        salon: transactionSalon._id,
+        isActive: true,
+      }).session(session);
+      const currentBarber = await Barber.findOne({
+        _id: new Types.ObjectId(payload.barberId),
+        salon: transactionSalon._id,
+        isActive: true,
+        isVerified: true,
+        isAvailable: true,
+        services: service._id,
+      }).session(session);
+      const currentBarberUser = currentBarber ? await User.findOne({
+        _id: currentBarber.user,
+        role: USER_ROLES.BARBER,
+        isActive: true,
+      }).session(session) : null;
+      if (
+        !currentService ||
+        currentService.duration !== service.duration ||
+        currentService.price !== service.price ||
+        currentService.discountPrice !== service.discountPrice ||
+        !currentBarber ||
+        !currentBarberUser
+      ) {
+        throw BOOKING_ERRORS.INVALID_SERVICE;
+      }
 
-      const dayStart = new Date(appointmentDate.toDateString());
+      const weekday = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][appointmentDate.getDay()];
+      const transactionHours = transactionSalon.openingHours?.[weekday as keyof typeof transactionSalon.openingHours];
+      if (!transactionHours || !isWithinOpeningHours(
+        transactionHours.isOpen,
+        transactionHours.openTime || '09:00',
+        transactionHours.closeTime || '18:00',
+        payload.startTime,
+        currentService.duration,
+        transactionSalon.slotIntervalMinutes,
+      )) {
+        throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
+      }
+      const dayStart = new Date(appointmentDate);
+      dayStart.setHours(0, 0, 0, 0);
       const dayEnd = new Date(dayStart);
       dayEnd.setDate(dayEnd.getDate() + 1);
+      const transactionLeave = await Leave.findOne({
+        salon: transactionSalon._id,
+        active: true,
+        startDate: { $lt: dayEnd },
+        endDate: { $gt: dayStart },
+        $or: [{ barber: null }, { barber: currentBarber._id }],
+      }).session(session);
+      if (transactionLeave) throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
+
       const activeFilter = activeBookingFilter();
 
       const barberOverlap = await Booking.findOne(
@@ -493,7 +636,7 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
         throw BOOKING_ERRORS.OVERLAPPING_BOOKING;
       }
 
-      const salonCapacity = salon.capacity || 4;
+      const salonCapacity = transactionSalon.capacity || 4;
       const bookingsAtThisSlot = await Booking.countDocuments(
         {
           salon: new Types.ObjectId(payload.salonId),
@@ -574,28 +717,46 @@ export async function getAvailableSlots(
   appointmentDate: string
 ): Promise<AvailabilityResponse> {
   await connectDB();
-  await releaseExpiredBookingHolds();
 
   // Validate inputs
-  const salon = await Salon.findById(salonId).select('openingHours capacity slotIntervalMinutes');
-  if (!salon) {
+  const salon = await Salon.findById(salonId).select('openingHours capacity slotIntervalMinutes isActive isVerified approvalStatus address.city address.state');
+  if (
+    !salon ||
+    !salon.isActive ||
+    !salon.isVerified ||
+    !isSalonApproved(salon) ||
+    !isSupportedSalonLocation(salon.address.city, salon.address.state)
+  ) {
     throw BOOKING_ERRORS.INVALID_SALON;
   }
 
-  const barber = await Barber.findOne({ _id: barberId, salon: salonId, isActive: true, isAvailable: true }).select('_id');
+  const barber = await Barber.findOne({
+    _id: barberId,
+    salon: salonId,
+    isActive: true,
+    isVerified: true,
+    isAvailable: true,
+  }).select('_id services');
   if (!barber) {
     throw BOOKING_ERRORS.INVALID_BARBER;
   }
+  const barberAccount = await User.findOne({
+    _id: barber.user,
+    role: USER_ROLES.BARBER,
+    isActive: true,
+  }).select('_id');
+  if (!barberAccount) throw BOOKING_ERRORS.INVALID_BARBER;
 
   const service = await Service.findById(serviceId);
-  if (!service) {
+  if (!service || !service.isActive || service.salon.toString() !== salonId) {
     throw BOOKING_ERRORS.INVALID_SERVICE;
   }
+  if (!barber.services.some((id: Types.ObjectId) => id.toString() === serviceId)) throw BOOKING_ERRORS.BARBER_DOES_NOT_OFFER_SERVICE;
 
   // Parse date
-  const date = new Date(appointmentDate);
-  if (isNaN(date.getTime())) {
-    throw { code: 'INVALID_DATE', message: 'Invalid date format' };
+  const date = parseLocalCalendarDate(appointmentDate);
+  if (!date || !isDateBookable(date, BOOKING_MIN_DAYS_AHEAD, BOOKING_MAX_DAYS_AHEAD)) {
+    throw BOOKING_ERRORS.INVALID_DATE;
   }
 
   const dayStart = new Date(date.toDateString());
@@ -629,63 +790,21 @@ export async function getAvailableSlots(
   const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][date.getDay()];
   const dayHours = salon.openingHours?.[dayOfWeek as keyof typeof salon.openingHours];
 
-  if (!dayHours?.isOpen) {
-    return {
-      date: appointmentDate,
-      serviceDuration: service.duration,
-      salonCapacity: salon.capacity,
-      slots: [],
-    };
-  }
-
-  const openingTime = dayHours.openTime || '09:00';
-  const closingTime = dayHours.closeTime || '18:00';
+  const openingTime = dayHours?.openTime || '09:00';
+  const closingTime = dayHours?.closeTime || '18:00';
   const salonCapacity = salon.capacity || 4;
   const slotInterval = salon.slotIntervalMinutes || 30;
-
-  // Generate all possible slots based on salon slot interval
-  const slots: TimeSlot[] = [];
-  const [openHour, openMin] = openingTime.split(':').map(Number);
-  const [closeHour, closeMin] = closingTime.split(':').map(Number);
-
-  let currentHour = openHour;
-  let currentMin = openMin;
-  const closeTotalMin = closeHour * 60 + closeMin;
-
-  while (currentHour * 60 + currentMin + service.duration <= closeTotalMin) {
-    const startTime = `${String(currentHour).padStart(2, '0')}:${String(currentMin).padStart(2, '0')}`;
-    const endHour = Math.floor((currentHour * 60 + currentMin + service.duration) / 60);
-    const endMin = (currentHour * 60 + currentMin + service.duration) % 60;
-    const endTime = `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}`;
-
-    // Count bookings that overlap with this slot
-    const overlappingBookings = allBookings.filter((booking) => {
-      const bookingStart = booking.startTime;
-      const bookingEnd = booking.endTime;
-      // Check if there's any overlap
-      return isTimeOverlap(bookingStart, bookingEnd, startTime, endTime);
-    });
-
-    const bookedCount = overlappingBookings.length;
-    const remainingCapacity = Math.max(0, salonCapacity - bookedCount);
-    const isAvailable = remainingCapacity > 0 && !barberUnavailable;
-
-    slots.push({
-      startTime,
-      endTime,
-      available: isAvailable,
-      capacity: salonCapacity,
-      booked: bookedCount,
-      remaining: remainingCapacity,
-    });
-
-    // Move to next slot
-    currentMin += slotInterval;
-    if (currentMin >= 60) {
-      currentHour += Math.floor(currentMin / 60);
-      currentMin = currentMin % 60;
-    }
-  }
+  const slots: TimeSlot[] = buildAvailabilitySlots({
+    isOpen: Boolean(dayHours?.isOpen),
+    openingTime,
+    closingTime,
+    serviceDuration: service.duration,
+    salonCapacity,
+    slotIntervalMinutes: slotInterval,
+    bookings: allBookings,
+    barberUnavailable,
+    appointmentDate: date,
+  });
 
   return {
     date: appointmentDate,
@@ -704,7 +823,6 @@ export async function getEarliestAvailableSlot(
   daysToCheck: number = 7
 ): Promise<{ date: string; time: string } | null> {
   await connectDB();
-  await releaseExpiredBookingHolds();
 
   const salon = await Salon.findById(salonId).select('openingHours capacity slotIntervalMinutes');
   if (!salon) {
@@ -782,7 +900,14 @@ export async function getEarliestAvailableSlot(
  */
 export async function getCustomerBookings(
   customerId: string,
-  options: { page: number; limit: number; status?: string }
+  options: {
+    page: number;
+    limit: number;
+    status?: string;
+    paymentStatus?: string;
+    sortBy?: 'appointmentDate' | 'createdAt';
+    sortOrder?: 'asc' | 'desc';
+  }
 ): Promise<{ bookings: IBooking[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
   await connectDB();
 
@@ -790,13 +915,17 @@ export async function getCustomerBookings(
   if (options.status) {
     query.status = options.status;
   }
+  if (options.paymentStatus) query.paymentStatus = options.paymentStatus;
 
   const total = await Booking.countDocuments(query);
   const totalPages = Math.ceil(total / options.limit);
 
   const bookings = await Booking.find(query)
     .populate(['salon', 'barber', 'service'])
-    .sort({ appointmentDate: -1 })
+    .sort({
+      [options.sortBy || 'appointmentDate']: options.sortOrder === 'asc' ? 1 : -1,
+      startTime: options.sortOrder === 'asc' ? 1 : -1,
+    })
     .skip((options.page - 1) * options.limit)
     .limit(options.limit);
 
@@ -816,6 +945,21 @@ export async function getCustomerBookings(
  */
 export async function getBookingById(bookingId: string, currentUser: AuthUser): Promise<IBooking | null> {
   await connectDB();
+
+  const adminRoles = [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN] as const;
+  const isAdmin = adminRoles.includes(currentUser.role as (typeof adminRoles)[number]);
+  const bookingReaderRoles: AuthUser['role'][] = [
+    USER_ROLES.CUSTOMER,
+    USER_ROLES.SALON_OWNER,
+    USER_ROLES.SALON_STAFF,
+    USER_ROLES.BARBER,
+  ];
+  if (
+    !isAdmin &&
+    !bookingReaderRoles.includes(currentUser.role)
+  ) {
+    throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
 
   const booking = await Booking.findById(bookingId).populate(['customer', 'salon', 'barber', 'service']);
 
@@ -837,6 +981,14 @@ export async function getBookingById(bookingId: string, currentUser: AuthUser): 
     }
   }
 
+  if (currentUser.role === USER_ROLES.SALON_STAFF) {
+    const salon = await Salon.findOne({
+      _id: booking.salon._id,
+      staff: new Types.ObjectId(currentUser._id),
+    });
+    if (!salon) throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
+
   if (currentUser.role === USER_ROLES.BARBER) {
     const barber = await Barber.findOne({
       _id: booking.barber._id,
@@ -845,11 +997,6 @@ export async function getBookingById(bookingId: string, currentUser: AuthUser): 
     if (!barber) {
       throw BOOKING_ERRORS.UNAUTHORIZED;
     }
-  }
-
-  const adminRoles = [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN] as const;
-  if (!adminRoles.includes(currentUser.role as (typeof adminRoles)[number])) {
-    // Admin/super-admin can view any booking
   }
 
   return booking;
@@ -866,14 +1013,20 @@ export async function cancelBooking(
 ): Promise<IBooking> {
   await connectDB();
 
+  if (currentUser.role !== USER_ROLES.CUSTOMER) {
+    throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
   const booking = await Booking.findById(bookingId);
   if (!booking) {
     throw BOOKING_ERRORS.BOOKING_NOT_FOUND;
   }
 
   // Authorization: customer can only cancel their own booking
-  if (currentUser.role === 'CUSTOMER' && booking.customer.toString() !== currentUser._id) {
+  if (booking.customer.toString() !== currentUser._id) {
     throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
+  if (![BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED].includes(booking.status)) {
+    throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
   }
 
   // Check if cancellation is within allowed window
@@ -888,16 +1041,27 @@ export async function cancelBooking(
     throw BOOKING_ERRORS.CANNOT_CANCEL;
   }
 
-  // Update booking
-  booking.status = BOOKING_STATUS.CANCELLED;
-  booking.cancellationReason = reason || 'Customer cancelled';
-  await booking.save();
+  const cancelledBooking = await Booking.findOneAndUpdate(
+    {
+      _id: booking._id,
+      customer: new Types.ObjectId(currentUser._id),
+      status: { $in: [BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED] },
+    },
+    {
+      $set: {
+        status: BOOKING_STATUS.CANCELLED,
+        cancellationReason: reason || 'Customer cancelled',
+      },
+    },
+    { new: true, runValidators: true },
+  );
+  if (!cancelledBooking) throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
   await releaseCouponUsage(bookingId);
-  if (booking.loyaltyPointsRedeemed && booking.loyaltyPointsRedeemed > 0) {
-    await refundRedeemedPoints(bookingId, booking.customer.toString());
+  if (cancelledBooking.loyaltyPointsRedeemed && cancelledBooking.loyaltyPointsRedeemed > 0) {
+    await refundRedeemedPoints(bookingId, cancelledBooking.customer.toString());
   }
 
-  const populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
+  const populatedBooking = await cancelledBooking.populate(['customer', 'salon', 'barber', 'service']);
   await notifyBookingCancelled(populatedBooking._id.toString());
   void recordAuditEvent({
     actor: currentUser,
@@ -927,9 +1091,10 @@ export async function updateBookingStatus(
 
   const isAdmin = [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(currentUser.role as typeof USER_ROLES.ADMIN);
   const isSalonOwner = currentUser.role === USER_ROLES.SALON_OWNER;
+  const isSalonStaff = currentUser.role === USER_ROLES.SALON_STAFF;
   const isBarber = currentUser.role === USER_ROLES.BARBER;
 
-  if (!isAdmin && !isSalonOwner && !isBarber) {
+  if (!isAdmin && !isSalonOwner && !isSalonStaff && !isBarber) {
     throw BOOKING_ERRORS.UNAUTHORIZED;
   }
 
@@ -943,6 +1108,14 @@ export async function updateBookingStatus(
     }
   }
 
+  if (isSalonStaff) {
+    const salon = await Salon.findOne({
+      _id: booking.salon,
+      staff: new Types.ObjectId(currentUser._id),
+    });
+    if (!salon) throw BOOKING_ERRORS.UNAUTHORIZED;
+  }
+
   if (isBarber) {
     const barber = await Barber.findOne({
       _id: booking.barber,
@@ -953,23 +1126,18 @@ export async function updateBookingStatus(
     }
   }
 
-  const validTransitions: Record<string, string[]> = {
-    [BOOKING_STATUS.PENDING]: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.CANCELLED],
-    [BOOKING_STATUS.CONFIRMED]: [BOOKING_STATUS.IN_PROGRESS, BOOKING_STATUS.CANCELLED, BOOKING_STATUS.NO_SHOW],
-    [BOOKING_STATUS.IN_PROGRESS]: [BOOKING_STATUS.COMPLETED, BOOKING_STATUS.NO_SHOW],
-    [BOOKING_STATUS.COMPLETED]: [],
-    [BOOKING_STATUS.CANCELLED]: [],
-    [BOOKING_STATUS.NO_SHOW]: [],
-  };
-
-  if (!validTransitions[booking.status]?.includes(newStatus)) {
+  if (!isBookingStatusTransitionAllowed(booking.status, newStatus)) {
     throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
   }
 
-  booking.status = newStatus;
-  await booking.save();
+  const updatedBooking = await Booking.findOneAndUpdate(
+    { _id: booking._id, status: booking.status },
+    { $set: { status: newStatus } },
+    { new: true, runValidators: true },
+  );
+  if (!updatedBooking) throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
 
-  const populatedBooking = await booking.populate(['customer', 'salon', 'barber', 'service']);
+  const populatedBooking = await updatedBooking.populate(['customer', 'salon', 'barber', 'service']);
 
   if (newStatus === BOOKING_STATUS.CONFIRMED) {
     await notifyBookingConfirmed(populatedBooking._id.toString());
@@ -1011,14 +1179,16 @@ export async function rescheduleBooking(
     throw BOOKING_ERRORS.BOOKING_NOT_FOUND;
   }
 
-  // Authorization: customer can only reschedule their own booking
-  if (currentUser.role === 'CUSTOMER' && booking.customer.toString() !== currentUser._id) {
+  if (currentUser.role !== USER_ROLES.CUSTOMER || booking.customer.toString() !== currentUser._id) {
     throw BOOKING_ERRORS.UNAUTHORIZED;
   }
 
   // Can only reschedule if booking is PENDING or CONFIRMED
   if (![BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED].includes(booking.status)) {
     throw { code: 'CANNOT_RESCHEDULE', message: 'Cannot reschedule completed, cancelled, or in-progress bookings' };
+  }
+  if (booking.status === BOOKING_STATUS.PENDING && isBookingHoldExpired(booking.holdExpiresAt)) {
+    throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
   }
 
   // Check if current appointment is in the future (must not be within cancellation window of old appointment)
@@ -1033,11 +1203,12 @@ export async function rescheduleBooking(
   }
 
   // Validate new appointment date
-  const newDate = new Date(newAppointmentDate);
-  if (!isDateBookable(newDate, BOOKING_MIN_DAYS_AHEAD, BOOKING_MAX_DAYS_AHEAD)) {
+  const newDate = parseLocalCalendarDate(newAppointmentDate);
+  if (!newDate || !isDateBookable(newDate, BOOKING_MIN_DAYS_AHEAD, BOOKING_MAX_DAYS_AHEAD)) {
     throw BOOKING_ERRORS.INVALID_DATE;
   }
 
+  if (!isValidTimeFormat(newStartTime)) throw BOOKING_ERRORS.INVALID_TIME;
   // Validate new date and time are not in past
   if (isAppointmentInPast(newDate, newStartTime)) {
     throw BOOKING_ERRORS.DATE_IN_PAST;
@@ -1045,8 +1216,36 @@ export async function rescheduleBooking(
 
   // Get service (it might have changed, so always fetch fresh)
   const service = await Service.findById(booking.service._id);
-  if (!service || !service.isActive) {
+  if (!service || !service.isActive || service.salon.toString() !== booking.salon._id.toString()) {
     throw BOOKING_ERRORS.INVALID_SERVICE;
+  }
+  const salon = await Salon.findOne({
+    _id: booking.salon._id,
+    isActive: true,
+    isVerified: true,
+  }).select('+openingHours capacity bookingLockVersion approvalStatus address');
+  if (
+    !salon ||
+    !isSalonApproved(salon) ||
+    !isSupportedSalonLocation(salon.address.city, salon.address.state)
+  ) {
+    throw BOOKING_ERRORS.INVALID_SALON;
+  }
+  const barber = await Barber.findOne({
+    _id: booking.barber._id,
+    salon: salon._id,
+    isActive: true,
+    isVerified: true,
+    isAvailable: true,
+  }).select('user services');
+  const barberAccount = barber ? await User.findOne({
+    _id: barber.user,
+    role: USER_ROLES.BARBER,
+    isActive: true,
+  }).select('_id') : null;
+  if (!barber || !barberAccount) throw BOOKING_ERRORS.INVALID_BARBER;
+  if (!barber.services?.some((id: Types.ObjectId) => id.toString() === service._id.toString())) {
+    throw BOOKING_ERRORS.BARBER_DOES_NOT_OFFER_SERVICE;
   }
 
   // Calculate new end time
@@ -1056,24 +1255,97 @@ export async function rescheduleBooking(
   if (!isValidTimeRange(newStartTime, newEndTime)) {
     throw BOOKING_ERRORS.INVALID_TIME;
   }
+  const weekday = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][newDate.getDay()];
+  const dayHours = salon.openingHours?.[weekday as keyof typeof salon.openingHours];
+  if (!dayHours || !isWithinOpeningHours(
+    dayHours.isOpen,
+    dayHours.openTime || '09:00',
+    dayHours.closeTime || '18:00',
+    newStartTime,
+    service.duration,
+    salon.slotIntervalMinutes,
+  )) {
+    throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
+  }
+  const dayStart = new Date(newDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+  const activeLeave = await Leave.findOne({
+    salon: salon._id,
+    active: true,
+    startDate: { $lt: dayEnd },
+    endDate: { $gt: dayStart },
+    $or: [{ barber: null }, { barber: barber._id }],
+  }).select('_id');
+  if (activeLeave) throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
 
   const session = await mongoose.startSession();
+  const transactionResult: { booking: IBooking | null } = { booking: null };
   try {
     await session.withTransaction(async () => {
-      await Salon.updateOne(
-        { _id: booking.salon._id },
-        { $inc: { bookingLockVersion: 1 } },
-        { session },
-      );
-
-      await releaseExpiredBookingHolds(session);
-      const dayStart = new Date(newDate.toDateString());
-      const dayEnd = new Date(dayStart);
-      dayEnd.setDate(dayEnd.getDate() + 1);
+      const transactionSalon = await lockEligibleSalonForBooking(salon._id, session);
+      await releaseExpiredBookingHolds(transactionSalon._id, session);
+      const currentBooking = await Booking.findById(bookingId).session(session);
+      if (!currentBooking || currentBooking.customer.toString() !== currentUser._id) {
+        throw BOOKING_ERRORS.UNAUTHORIZED;
+      }
+      if (
+        ![BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED].includes(currentBooking.status) ||
+        (currentBooking.status === BOOKING_STATUS.PENDING && isBookingHoldExpired(currentBooking.holdExpiresAt))
+      ) {
+        throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
+      }
+      const transactionService = await Service.findOne({
+        _id: currentBooking.service,
+        salon: transactionSalon._id,
+        isActive: true,
+      }).session(session);
+      const transactionBarber = await Barber.findOne({
+        _id: currentBooking.barber,
+        salon: transactionSalon._id,
+        isActive: true,
+        isVerified: true,
+        isAvailable: true,
+        services: currentBooking.service,
+      }).session(session);
+      const transactionBarberUser = transactionBarber ? await User.findOne({
+        _id: transactionBarber.user,
+        role: USER_ROLES.BARBER,
+        isActive: true,
+      }).session(session) : null;
+      if (
+        !transactionService ||
+        transactionService.duration !== service.duration ||
+        !transactionBarber ||
+        !transactionBarberUser
+      ) {
+        throw BOOKING_ERRORS.INVALID_SERVICE;
+      }
+      const transactionWeekday = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][newDate.getDay()];
+      const transactionHours = transactionSalon.openingHours?.[transactionWeekday as keyof typeof transactionSalon.openingHours];
+      if (!transactionHours || !isWithinOpeningHours(
+        transactionHours.isOpen,
+        transactionHours.openTime || '09:00',
+        transactionHours.closeTime || '18:00',
+        newStartTime,
+        transactionService.duration,
+        transactionSalon.slotIntervalMinutes,
+      )) {
+        throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
+      }
+      const transactionLeave = await Leave.findOne({
+        salon: transactionSalon._id,
+        active: true,
+        startDate: { $lt: dayEnd },
+        endDate: { $gt: dayStart },
+        $or: [{ barber: null }, { barber: transactionBarber._id }],
+      }).session(session);
+      if (transactionLeave) throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
       const activeFilter = activeBookingFilter();
       const existingBookings = await Booking.find({
-        _id: { $ne: new Types.ObjectId(bookingId) },
-        barber: booking.barber._id,
+        _id: { $ne: currentBooking._id },
+        barber: currentBooking.barber,
         appointmentDate: { $gte: dayStart, $lt: dayEnd },
         ...activeFilter,
       }).session(session);
@@ -1083,10 +1355,10 @@ export async function rescheduleBooking(
         throw BOOKING_ERRORS.OVERLAPPING_BOOKING;
       }
 
-      const salonCapacity = (booking.salon as unknown as ISalon).capacity || 4;
+      const salonCapacity = transactionSalon.capacity || 4;
       const salonBookings = await Booking.countDocuments({
-        _id: { $ne: new Types.ObjectId(bookingId) },
-        salon: booking.salon._id,
+        _id: { $ne: currentBooking._id },
+        salon: transactionSalon._id,
         appointmentDate: { $gte: dayStart, $lt: dayEnd },
         ...activeFilter,
         startTime: { $lt: newEndTime },
@@ -1096,10 +1368,20 @@ export async function rescheduleBooking(
         throw BOOKING_ERRORS.SLOT_UNAVAILABLE;
       }
 
-      booking.appointmentDate = newDate;
-      booking.startTime = newStartTime;
-      booking.endTime = newEndTime;
-      await booking.save({ session });
+      const updateFilter: Record<string, unknown> = {
+        _id: currentBooking._id,
+        customer: new Types.ObjectId(currentUser._id),
+        status: currentBooking.status,
+      };
+      if (currentBooking.status === BOOKING_STATUS.PENDING) {
+        updateFilter.holdExpiresAt = { $gt: new Date() };
+      }
+      transactionResult.booking = await Booking.findOneAndUpdate(
+        updateFilter,
+        { $set: { appointmentDate: newDate, startTime: newStartTime, endTime: newEndTime } },
+        { new: true, runValidators: true, session },
+      );
+      if (!transactionResult.booking) throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
     });
   } finally {
     await session.endSession();
@@ -1113,5 +1395,6 @@ export async function rescheduleBooking(
     metadata: { appointmentDate: newAppointmentDate, startTime: newStartTime },
   });
 
-  return booking.populate(['customer', 'salon', 'barber', 'service']);
+  if (!transactionResult.booking) throw BOOKING_ERRORS.BOOKING_NOT_FOUND;
+  return transactionResult.booking.populate(['customer', 'salon', 'barber', 'service']);
 }

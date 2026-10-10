@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
     await recordPaymentFailure(
       validatedInput.bookingId,
       validatedInput.razorpay_order_id,
+      currentUser,
       validatedInput.error_code,
       validatedInput.error_description
     );
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        message: 'Payment failure recorded',
+        message: 'Payment failure reported',
       },
       { status: 200 }
     );
@@ -58,6 +59,22 @@ export async function POST(request: NextRequest) {
           },
         },
         { status: 400 }
+      );
+    }
+
+    if (error && typeof error === 'object' && 'code' in error) {
+      const paymentError = error as { code: string; message?: string };
+      const statusCode =
+        paymentError.code === 'UNAUTHORIZED'
+          ? 401
+          : paymentError.code === 'FORBIDDEN'
+            ? 403
+            : paymentError.code === 'BOOKING_NOT_FOUND' || paymentError.code === 'PAYMENT_NOT_FOUND'
+              ? 404
+              : 400;
+      return NextResponse.json(
+        { success: false, error: { code: paymentError.code, message: paymentError.message } },
+        { status: statusCode },
       );
     }
 

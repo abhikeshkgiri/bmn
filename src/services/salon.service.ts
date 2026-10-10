@@ -4,7 +4,10 @@
  */
 
 import { connectDB } from '@/lib/db';
+import { Types } from 'mongoose';
 import Salon from '@/models/Salon';
+import Barber from '@/models/Barber';
+import Service from '@/models/Service';
 import User from '@/models/User';
 import { generateUniqueSlug } from '@/utils/slug';
 import { normalizePhoneNumber } from '@/utils/phone';
@@ -13,9 +16,103 @@ import type { AuthUser } from '@/types';
 import type { SalonCreateInput, SalonUpdateInput } from '@/validations/salon.schema';
 import type { ISalon } from '@/models/Salon';
 import { recordAuditEvent } from '@/services/audit.service';
+import {
+  getSupportedSalonLocationFilter,
+  normalizeSupportedSalonLocation,
+  UNSUPPORTED_CITY_MESSAGE,
+} from '@/constants/launch-cities';
+import { APPROVED_SALON_STATUS_FILTER, isSalonApproved } from '@/utils/salon-approval';
+import { buildActiveServiceSearchFilter } from '@/utils/service-search';
 
 export interface SalonWithOwner extends Omit<ISalon, 'owner'> {
   owner: AuthUser;
+}
+
+export interface PublicSalonDetails {
+  _id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  logo?: string;
+  coverImage?: string;
+  images: string[];
+  address: Partial<ISalon['address']>;
+  location?: ISalon['location'];
+  contact: Partial<ISalon['contact']>;
+  openingHours: Partial<ISalon['openingHours']>;
+  facilities: ISalon['facilities'];
+  rating: number;
+  reviewCount: number;
+  isVerified: boolean;
+  services: Array<{
+    _id: string;
+    name: string;
+    description?: string;
+    category: string;
+    duration: number;
+    price: number;
+    discountPrice?: number;
+    image?: string;
+  }>;
+  barbers: Array<{
+    _id: string;
+    name: string;
+    slug: string;
+    profileImage?: string;
+    bio?: string;
+    experienceYears: number;
+    specializations: string[];
+    rating: number;
+    reviewCount: number;
+    services: Array<{ _id: string; name: string; duration: number; price: number }>;
+  }>;
+}
+
+interface PublicSalonRecord {
+  _id: Types.ObjectId;
+  name: string;
+  slug: string;
+  description?: string | null;
+  logo?: string | null;
+  coverImage?: string | null;
+  images?: string[];
+  address?: Partial<ISalon['address']>;
+  location?: ISalon['location'];
+  contact?: Partial<ISalon['contact']>;
+  openingHours?: Partial<ISalon['openingHours']>;
+  facilities?: ISalon['facilities'];
+  rating: number;
+  reviewCount: number;
+  isVerified: boolean;
+}
+
+interface PublicServiceRecord {
+  _id: Types.ObjectId;
+  name: string;
+  description?: string | null;
+  category: string;
+  duration: number;
+  price: number;
+  discountPrice?: number | null;
+  image?: string | null;
+}
+
+interface PublicBarberRecord {
+  _id: Types.ObjectId;
+  user: Types.ObjectId;
+  name: string;
+  slug: string;
+  profileImage?: string | null;
+  bio?: string | null;
+  experienceYears: number;
+  specializations: string[];
+  services?: Types.ObjectId[];
+  rating: number;
+  reviewCount: number;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -26,6 +123,8 @@ export async function createSalon(
   input: SalonCreateInput,
   currentUser: AuthUser
 ): Promise<ISalon> {
+  const supportedLocation = normalizeSupportedSalonLocation(input.address.city, input.address.state);
+  if (!supportedLocation) throw new Error(`CITY_NOT_SUPPORTED: ${UNSUPPORTED_CITY_MESSAGE}`);
   await connectDB();
 
   // Verify user role can create salon
@@ -59,6 +158,13 @@ export async function createSalon(
     throw new Error('INVALID_OWNER_ROLE: Owner must have SALON_OWNER, ADMIN, or SUPER_ADMIN role');
   }
 
+  if (
+    currentUser.role === USER_ROLES.SALON_OWNER &&
+    await Salon.exists({ owner: currentUser._id })
+  ) {
+    throw new Error('SALON_ALREADY_EXISTS');
+  }
+
   // Generate unique slug
   const slug = await generateUniqueSlug(input.name);
 
@@ -73,7 +179,7 @@ export async function createSalon(
     logo: input.logo || null,
     coverImage: input.coverImage || null,
     owner: ownerId,
-    address: input.address,
+    address: { ...input.address, city: supportedLocation.city, state: supportedLocation.state },
     location: input.location,
     contact: {
       phone: normalizedPhone,
@@ -82,8 +188,9 @@ export async function createSalon(
     },
     openingHours: input.openingHours,
     facilities: input.facilities || [],
-    isActive: true,
+    isActive: false,
     isVerified: false,
+    approvalStatus: 'PENDING',
   });
 
   return salon;
@@ -94,7 +201,13 @@ export async function createSalon(
  */
 export async function getSalonById(salonId: string): Promise<ISalon | null> {
   await connectDB();
-  const salon = await Salon.findById(salonId).populate('owner', 'name phone email role');
+  const salon = await Salon.findOne({
+    _id: salonId,
+    isActive: true,
+    isVerified: true,
+    approvalStatus: APPROVED_SALON_STATUS_FILTER,
+    ...getSupportedSalonLocationFilter(),
+  }).populate('owner', 'name phone email role');
   return salon;
 }
 
@@ -103,8 +216,134 @@ export async function getSalonById(salonId: string): Promise<ISalon | null> {
  */
 export async function getSalonBySlug(slug: string): Promise<ISalon | null> {
   await connectDB();
-  const salon = await Salon.findOne({ slug }).populate('owner', 'name phone email role');
+  const salon = await Salon.findOne({
+    slug,
+    isActive: true,
+    isVerified: true,
+    approvalStatus: APPROVED_SALON_STATUS_FILTER,
+    ...getSupportedSalonLocationFilter(),
+  }).populate('owner', 'name phone email role');
   return salon;
+}
+
+/**
+ * Return only public salon, service, and barber fields for a salon detail page.
+ */
+export async function getPublicSalonDetails(identifier: string): Promise<PublicSalonDetails | null> {
+  await connectDB();
+
+  const supportedLocation = getSupportedSalonLocationFilter();
+  if (!supportedLocation) return null;
+
+  const isObjectId = /^[a-f\d]{24}$/i.test(identifier);
+  const salon: PublicSalonRecord | null = await Salon.findOne({
+    ...(isObjectId ? { _id: identifier } : { slug: identifier.toLowerCase() }),
+    isActive: true,
+    isVerified: true,
+    approvalStatus: APPROVED_SALON_STATUS_FILTER,
+    ...supportedLocation,
+  })
+    .select('name slug description logo coverImage images address location contact openingHours facilities rating reviewCount isVerified')
+    .maxTimeMS(5000)
+    .lean();
+
+  if (!salon) return null;
+
+  const [serviceRecords, barberRecords]: [PublicServiceRecord[], PublicBarberRecord[]] = await Promise.all([
+    Service.find({ salon: salon._id, isActive: true })
+      .select('name description category duration price discountPrice image')
+      .sort({ name: 1 })
+      .limit(50)
+      .maxTimeMS(5000)
+      .lean(),
+    Barber.find({ salon: salon._id, isActive: true, isVerified: true })
+      .select('user name slug profileImage bio experienceYears specializations services rating reviewCount')
+      .sort({ name: 1 })
+      .limit(50)
+      .maxTimeMS(5000)
+      .lean(),
+  ]);
+
+  const activeUserIds = new Set(
+    (await User.find({
+      _id: { $in: barberRecords.map((barber) => barber.user) },
+      isActive: true,
+      role: USER_ROLES.BARBER,
+    })
+      .distinct('_id')
+      .maxTimeMS(5000))
+      .map((id: Types.ObjectId) => id.toString()),
+  );
+
+  const services = serviceRecords
+    .filter((service) =>
+      Number.isFinite(service.duration) &&
+      service.duration >= 15 &&
+      service.duration <= 480 &&
+      Number.isFinite(service.price) &&
+      service.price >= 0,
+    )
+    .map((service) => ({
+      _id: service._id.toString(),
+      name: service.name,
+      description: service.description || undefined,
+      category: service.category,
+      duration: service.duration,
+      price: service.price,
+      discountPrice:
+        typeof service.discountPrice === 'number' &&
+        Number.isFinite(service.discountPrice) &&
+        service.discountPrice >= 0 &&
+        service.discountPrice <= service.price
+          ? service.discountPrice
+          : undefined,
+      image: service.image || undefined,
+    }));
+  const servicesById = new Map(services.map((service) => [service._id, service]));
+
+  const barbers = barberRecords
+    .filter((barber) => activeUserIds.has(barber.user.toString()))
+    .map((barber) => ({
+      _id: barber._id.toString(),
+      name: barber.name,
+      slug: barber.slug,
+      profileImage: barber.profileImage || undefined,
+      bio: barber.bio || undefined,
+      experienceYears: Number.isFinite(barber.experienceYears) && barber.experienceYears >= 0
+        ? barber.experienceYears
+        : 0,
+      specializations: barber.specializations,
+      rating: Number.isFinite(barber.rating) && barber.rating >= 0 && barber.rating <= 5
+        ? barber.rating
+        : 0,
+      reviewCount: Number.isFinite(barber.reviewCount) && barber.reviewCount >= 0
+        ? barber.reviewCount
+        : 0,
+      services: (barber.services ?? [])
+        .map((serviceId) => servicesById.get(serviceId.toString()))
+        .filter((service): service is NonNullable<typeof service> => Boolean(service))
+        .map(({ _id, name, duration, price }) => ({ _id, name, duration, price })),
+    }));
+
+  return {
+    _id: salon._id.toString(),
+    name: salon.name,
+    slug: salon.slug,
+    description: salon.description || undefined,
+    logo: salon.logo || undefined,
+    coverImage: salon.coverImage || undefined,
+    images: (salon.images ?? []).filter((image): image is string => typeof image === 'string' && image.length > 0),
+    address: salon.address ?? {},
+    location: salon.location,
+    contact: salon.contact ?? {},
+    openingHours: salon.openingHours ?? {},
+    facilities: salon.facilities ?? [],
+    rating: Number.isFinite(salon.rating) && salon.rating >= 0 && salon.rating <= 5 ? salon.rating : 0,
+    reviewCount: Number.isFinite(salon.reviewCount) && salon.reviewCount >= 0 ? salon.reviewCount : 0,
+    isVerified: salon.isVerified,
+    services,
+    barbers,
+  };
 }
 
 /**
@@ -153,6 +392,19 @@ export async function updateSalon(
     throw new Error('SALON_ACCESS_DENIED: You can only edit your own salon');
   }
 
+  const locationChanged = input.address?.city !== undefined || input.address?.state !== undefined;
+  const activating = input.isActive === true && isAdmin;
+  if (locationChanged || activating) {
+    const city = input.address?.city ?? salon.address.city;
+    const state = input.address?.state ?? salon.address.state;
+    const supportedLocation = normalizeSupportedSalonLocation(city, state);
+    if (!supportedLocation) throw new Error(`CITY_NOT_SUPPORTED: ${UNSUPPORTED_CITY_MESSAGE}`);
+    if (locationChanged && input.address) {
+      input.address.city = supportedLocation.city;
+      input.address.state = supportedLocation.state;
+    }
+  }
+
   // Update allowed fields
   if (input.name) salon.name = input.name;
   if (input.description !== undefined) salon.description = input.description || '';
@@ -197,6 +449,15 @@ export async function updateSalon(
     salon.isActive = input.isActive;
   }
 
+  if (isOwner && Object.keys(input).some((key) => key !== 'isActive')) {
+    salon.isActive = false;
+    salon.isVerified = false;
+    salon.approvalStatus = 'PENDING';
+    salon.rejectionReason = null;
+    salon.approvalUpdatedAt = null;
+    salon.approvalUpdatedBy = null;
+  }
+
   // Protected fields - cannot be changed
   // - owner
   // - isVerified (only by admin)
@@ -227,6 +488,12 @@ export async function activateSalon(salonId: string, currentUser: AuthUser): Pro
     throw new Error('SALON_ACCESS_DENIED: You can only manage your own salon');
   }
 
+  if (!normalizeSupportedSalonLocation(salon.address.city, salon.address.state)) {
+    throw new Error(`CITY_NOT_SUPPORTED: ${UNSUPPORTED_CITY_MESSAGE}`);
+  }
+  if (!isSalonApproved(salon)) {
+    throw new Error('SALON_NOT_APPROVED');
+  }
   salon.isActive = true;
   await salon.save();
   void recordAuditEvent({ actor: currentUser, action: 'SALON_ACTIVATED', entityType: 'Salon', entityId: salonId });
@@ -276,7 +543,15 @@ export async function verifySalon(salonId: string, currentUser: AuthUser): Promi
     throw new Error('SALON_NOT_FOUND: Salon not found');
   }
 
+  if (!normalizeSupportedSalonLocation(salon.address.city, salon.address.state)) {
+    throw new Error(`CITY_NOT_SUPPORTED: ${UNSUPPORTED_CITY_MESSAGE}`);
+  }
   salon.isVerified = true;
+  salon.isActive = true;
+  salon.approvalStatus = 'APPROVED';
+  salon.rejectionReason = null;
+  salon.approvalUpdatedAt = new Date();
+  salon.approvalUpdatedBy = new Types.ObjectId(currentUser._id);
   await salon.save();
   void recordAuditEvent({ actor: currentUser, action: 'SALON_VERIFIED', entityType: 'Salon', entityId: salonId });
   return salon;
@@ -300,6 +575,11 @@ export async function unverifySalon(salonId: string, currentUser: AuthUser): Pro
   }
 
   salon.isVerified = false;
+  salon.isActive = false;
+  salon.approvalStatus = 'PENDING';
+  salon.rejectionReason = null;
+  salon.approvalUpdatedAt = new Date();
+  salon.approvalUpdatedBy = new Types.ObjectId(currentUser._id);
   await salon.save();
   void recordAuditEvent({ actor: currentUser, action: 'SALON_UNVERIFIED', entityType: 'Salon', entityId: salonId });
   return salon;
@@ -318,23 +598,43 @@ export async function listSalons(options: {
   isActive?: boolean;
   slug?: string;
   search?: string;
+  serviceSearch?: string;
+  category?: string;
   sortBy?: string;
 }): Promise<{ salons: ISalon[]; total: number; page: number; limit: number }> {
-  await connectDB();
-
-  const page = Math.max(1, options.page || 1);
+  const page = Math.min(1000, Math.max(1, options.page || 1));
   const limit = Math.min(options.limit || 20, 50); // Max 50
+  const publicListing = options.isActive !== false;
+  const supportedLocationFilter = publicListing
+    ? getSupportedSalonLocationFilter(options.city, options.state)
+    : undefined;
 
+  if (publicListing && !supportedLocationFilter) {
+    return { salons: [], total: 0, page, limit };
+  }
+
+  await connectDB();
   const query: Record<string, unknown> = {};
+
+  if (options.serviceSearch || options.category) {
+    const matchingSalonIds = await Service.distinct(
+      'salon',
+      buildActiveServiceSearchFilter({
+        serviceSearch: options.serviceSearch,
+        category: options.category,
+      }),
+    ).maxTimeMS(5000);
+    query._id = { $in: matchingSalonIds };
+  }
 
   // Filters
   if (options.city) {
-    query['address.city'] = new RegExp(options.city, 'i');
+    query['address.city'] = new RegExp(`^\\s*${options.city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i');
   }
   if (options.area) {
-    query['address.area'] = new RegExp(options.area, 'i');
+    query['address.area'] = new RegExp(escapeRegex(options.area.trim()), 'i');
   }
-  if (options.state) {
+  if (options.state && !publicListing) {
     query['address.state'] = new RegExp(options.state, 'i');
   }
   if (options.isVerified !== undefined) {
@@ -346,6 +646,11 @@ export async function listSalons(options: {
   } else {
     query.isActive = true;
   }
+  if (publicListing) {
+    query.isVerified = true;
+    query.approvalStatus = APPROVED_SALON_STATUS_FILTER;
+    query.$and = [supportedLocationFilter];
+  }
 
   if (options.slug) {
     query.slug = options.slug.trim().toLowerCase();
@@ -353,15 +658,17 @@ export async function listSalons(options: {
 
   // Search
   if (options.search) {
-    query.$or = [
-      { name: new RegExp(options.search, 'i') },
-      { description: new RegExp(options.search, 'i') },
-      { 'address.area': new RegExp(options.search, 'i') },
+    const search = escapeRegex(options.search.trim());
+    const searchMatches = [
+      { name: new RegExp(search, 'i') },
+      { description: new RegExp(search, 'i') },
+      { 'address.area': new RegExp(search, 'i') },
     ];
+    query.$and = [...((query.$and as object[] | undefined) || []), { $or: searchMatches }];
   }
 
   // Count total
-  const total = await Salon.countDocuments(query);
+  const total = await Salon.countDocuments(query).maxTimeMS(5000);
 
   // Sorting
   let sortObj: Record<string, 1 | -1> = { createdAt: -1 }; // Default: newest
@@ -377,10 +684,12 @@ export async function listSalons(options: {
 
   // Fetch salons
   const salons = await Salon.find(query)
+    .select('name slug description logo coverImage images address.area address.city address.state rating reviewCount isVerified')
     .sort(sortObj)
     .skip((page - 1) * limit)
     .limit(limit)
-    .populate('owner', 'name phone email');
+    .maxTimeMS(5000)
+    .lean();
 
   return {
     salons,

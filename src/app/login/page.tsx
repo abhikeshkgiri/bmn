@@ -22,8 +22,11 @@ import { Spinner } from '@/components/ui/Loading';
 import Logo from '@/components/navbar/Logo';
 import Badge from '@/components/ui/Badge';
 import { isValidIndianPhoneNumber } from '@/utils/phone';
+import RoleSelection from '@/components/auth/RoleSelection';
+import { USER_ROLES, type UserRole } from '@/constants/roles';
 
 type LoginStepType = 'phone' | 'otp';
+type LoginAudience = 'customer' | 'salonOwner';
 
 const OTP_LENGTH = 6;
 
@@ -47,6 +50,7 @@ const brandHighlights = [
 
 export default function LoginPage() {
   const router = useRouter();
+  const [audience, setAudience] = useState<LoginAudience | null>(null);
   const [step, setStep] = useState<LoginStepType>('phone');
   const [phone, setPhone] = useState('');
   const [otpDigits, setOtpDigits] = useState<string[]>(Array(OTP_LENGTH).fill(''));
@@ -154,8 +158,26 @@ export default function LoginPage() {
       }
 
       setSuccess('Logged in successfully!');
-      // Redirect to home or dashboard
-      setTimeout(() => router.push('/'), 1500);
+      const role = data?.user?.role as UserRole | undefined;
+      const defaultPath = role === USER_ROLES.BARBER
+        ? '/dashboard/barber'
+        : role === USER_ROLES.SALON_OWNER
+          ? '/salon/onboarding'
+          : role === USER_ROLES.ADMIN || role === USER_ROLES.SUPER_ADMIN
+            ? '/admin'
+            : '/dashboard';
+      const requestedPath = new URLSearchParams(window.location.search).get('next');
+      const safeNext = requestedPath && requestedPath.startsWith('/') && !requestedPath.startsWith('//')
+        ? requestedPath
+        : null;
+      const nextIsBarberOnly = Boolean(safeNext?.startsWith('/dashboard/barber') || safeNext?.startsWith('/barber'));
+      const nextIsSalonOnly = Boolean(safeNext?.startsWith('/dashboard/salon') || safeNext?.startsWith('/salon'));
+      const nextIsAdminOnly = Boolean(safeNext?.startsWith('/admin'));
+      const nextAllowed =
+        (!nextIsBarberOnly || role === USER_ROLES.BARBER) &&
+        (!nextIsSalonOnly || role === USER_ROLES.SALON_OWNER || role === USER_ROLES.ADMIN || role === USER_ROLES.SUPER_ADMIN) &&
+        (!nextIsAdminOnly || role === USER_ROLES.ADMIN || role === USER_ROLES.SUPER_ADMIN);
+      router.replace(safeNext && nextAllowed ? safeNext : defaultPath);
     } catch {
       setError('An error occurred. Please try again.');
     } finally {
@@ -206,6 +228,21 @@ export default function LoginPage() {
     setError('');
     setSuccess('');
   };
+
+  if (!audience) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gradient-to-b from-white via-brand-pink/5 to-white px-4 py-10">
+        <div className="w-full max-w-xl">
+          <div className="mb-8 flex justify-center"><Logo size="md" /></div>
+          <RoleSelection mode="login" onSelect={setAudience} />
+          <p className="mt-6 text-center text-sm text-foreground-secondary">
+            New to BookMyNai?{' '}
+            <Link href="/signup/choose" className="font-semibold text-brand-pink">Create an account</Link>
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white lg:grid lg:grid-cols-[1.05fr_0.95fr]">
@@ -448,9 +485,9 @@ export default function LoginPage() {
             {/* Footer */}
             <div className="mt-8 border-t border-border pt-6 text-center">
               <p className="text-sm text-foreground-secondary">
-                New to BookMyNai? <Link href="/signup" className="font-semibold text-brand-pink">Create a customer account</Link>
+                New to BookMyNai? <Link href="/signup/choose" className="font-semibold text-brand-pink">Create an account</Link>
               </p>
-              <p className="mt-2 text-sm text-foreground-secondary"><Link href="/barber/signup" className="font-semibold text-brand-pink">Sign up as a Barber</Link></p>
+              <p className="mt-2 text-sm text-foreground-secondary"><Link href="/salon/signup" className="font-semibold text-brand-pink">Register as a Salon Owner</Link></p>
             </div>
           </Card>
 

@@ -10,6 +10,7 @@ import type { SessionPayload, AuthUser, UserRole } from '@/types';
 import User from '@/models/User';
 import { connectDB } from '@/lib/db';
 import { assertProductionEnvironment } from '@/lib/env';
+import { getDevAuthUserById, shouldUseDevAuthFallback } from '@/lib/dev-auth-store';
 
 // Get the secret key for JWT signing/verification
 function getAuthSecret(): Uint8Array {
@@ -38,6 +39,10 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
     const secret = getAuthSecret();
     const verified = await jwtVerify(token, secret);
     const payload = verified.payload as unknown as SessionPayload;
+
+    if (shouldUseDevAuthFallback()) {
+      return getDevAuthUserById(payload.userId);
+    }
 
     // Verify user still exists and is active
     await connectDB();

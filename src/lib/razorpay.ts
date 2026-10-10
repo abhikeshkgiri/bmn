@@ -51,12 +51,31 @@ export function verifyWebhookSignature(
 ): boolean {
   const secret = requireEnvironmentVariable('RAZORPAY_WEBHOOK_SECRET');
 
+  return verifyHmacSignature(body, signature, secret);
+}
+
+export function verifyWebhookSignatureWithSecret(
+  body: string,
+  signature: string,
+  secret: string,
+): boolean {
+  return verifyHmacSignature(body, signature, secret);
+}
+
+function verifyHmacSignature(data: string, signature: string, secret: string): boolean {
+  if (!/^[a-f\d]{64}$/i.test(signature)) {
+    return false;
+  }
+
   const expectedSignature = crypto
     .createHmac('sha256', secret)
-    .update(body)
+    .update(data)
     .digest('hex');
 
-  return expectedSignature === signature;
+  return crypto.timingSafeEqual(
+    Buffer.from(expectedSignature, 'hex'),
+    Buffer.from(signature, 'hex'),
+  );
 }
 
 /**
@@ -71,11 +90,14 @@ export function verifyPaymentSignature(
 ): boolean {
   const secret = requireEnvironmentVariable('RAZORPAY_KEY_SECRET');
 
-  const data = `${orderId}|${paymentId}`;
-  const expectedSignature = crypto
-    .createHmac('sha256', secret)
-    .update(data)
-    .digest('hex');
+  return verifyPaymentSignatureWithSecret(orderId, paymentId, signature, secret);
+}
 
-  return expectedSignature === signature;
+export function verifyPaymentSignatureWithSecret(
+  orderId: string,
+  paymentId: string,
+  signature: string,
+  secret: string,
+): boolean {
+  return verifyHmacSignature(`${orderId}|${paymentId}`, signature, secret);
 }

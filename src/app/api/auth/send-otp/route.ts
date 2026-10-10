@@ -36,7 +36,9 @@ export async function POST(request: NextRequest) {
     // Return success response
     const response: Record<string, unknown> = {
       success: true,
-      message: 'OTP sent successfully. Check your SMS for the code.',
+      message: otp
+        ? 'Development OTP ready. Use the code shown to continue.'
+        : 'OTP sent successfully. Check your SMS for the code.',
     };
 
     // In development, include OTP for testing

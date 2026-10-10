@@ -1,13 +1,13 @@
 /**
  * GET /api/salons/[id]
- * Get a single salon by ID
- * Public endpoint - shows active salons
+ * Get public salon details by ID or slug.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getSalonById, updateSalon, softDeleteSalon } from '@/services/salon.service';
+import { getPublicSalonDetails, updateSalon, softDeleteSalon } from '@/services/salon.service';
 import { requireAuth } from '@/lib/auth';
 import { SalonUpdateSchema } from '@/validations/salon.schema';
+import { SalonDetailParamSchema } from '@/validations/salon-discovery.schema';
 import { ZodError } from 'zod';
 
 export async function GET(
@@ -16,22 +16,8 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-
-    // Validate ID format
-    if (!id || id.length !== 24) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'Invalid salon ID',
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    const salon = await getSalonById(id);
+    const identifier = SalonDetailParamSchema.parse(id);
+    const salon = await getPublicSalonDetails(identifier);
 
     if (!salon) {
       return NextResponse.json(
@@ -46,20 +32,6 @@ export async function GET(
       );
     }
 
-    // Only show active salons publicly
-    if (!salon.isActive) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'SALON_INACTIVE',
-            message: 'This salon is currently unavailable',
-          },
-        },
-        { status: 404 }
-      );
-    }
-
     return NextResponse.json(
       {
         success: true,
@@ -67,7 +39,15 @@ export async function GET(
       },
       { status: 200 }
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'Invalid salon identifier' } },
+        { status: 400 },
+      );
+    }
+
+    console.error('Public salon detail request failed:', error instanceof Error ? error.name : 'UnknownError');
     return NextResponse.json(
       {
         success: false,
@@ -141,6 +121,13 @@ export async function PATCH(
 
     if (error instanceof Error) {
       const message = error.message;
+
+      if (message.startsWith('CITY_NOT_SUPPORTED:')) {
+        return NextResponse.json(
+          { success: false, error: { code: 'CITY_NOT_SUPPORTED', message: message.split(':').slice(1).join(':').trim() } },
+          { status: 422 }
+        );
+      }
 
       // Not found
       if (message.includes('SALON_NOT_FOUND')) {

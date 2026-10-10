@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { getBookingById } from '@/services/booking.service';
+import { BookingIdSchema } from '@/validations/booking.schema';
 
 interface Params {
   id: string;
@@ -19,6 +20,12 @@ interface Params {
 export async function GET(request: NextRequest, { params }: { params: Promise<Params> }) {
   try {
     const { id } = await params;
+    if (!BookingIdSchema.safeParse(id).success) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_ID', message: 'Booking ID is invalid' } },
+        { status: 400 }
+      );
+    }
 
     // Require authentication
     const currentUser = await getCurrentUser();
