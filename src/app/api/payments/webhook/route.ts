@@ -46,28 +46,64 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse webhook payload
-    const payload = JSON.parse(body);
-    const event = payload.event;
-    const data = payload.payload;
-    const eventId = request.headers.get('x-razorpay-event-id') || crypto.createHash('sha256').update(body).digest('hex');
-
-    if (!event) {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(body);
+    } catch {
       return NextResponse.json(
         {
           success: false,
           error: {
             code: 'INVALID_PAYLOAD',
-            message: 'Webhook payload missing event',
+            message: 'Webhook payload must be valid JSON',
           },
         },
         { status: 400 }
       );
     }
 
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_PAYLOAD', message: 'Webhook payload is invalid' } },
+        { status: 400 },
+      );
+    }
+
+    const webhookPayload = payload as Record<string, unknown>;
+    const event = webhookPayload.event;
+    const data = webhookPayload.payload;
+    const eventId = request.headers.get('x-razorpay-event-id') ||
+      crypto.createHash('sha256').update(body).digest('hex');
+
+    if (
+      typeof event !== 'string' ||
+      !event ||
+      !data ||
+      typeof data !== 'object' ||
+      Array.isArray(data) ||
+      eventId.length > 255
+    ) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_PAYLOAD', message: 'Webhook payload is incomplete' } },
+        { status: 400 },
+      );
+    }
+
     // Handle webhook event
     // Supported events: payment.captured, payment.failed, refund.created, refund.processed
-    await handleWebhookEvent(event, data || {}, eventId);
+    const result = await handleWebhookEvent(event, data as Record<string, unknown>, eventId);
+    if (result === 'BUSY') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'WEBHOOK_IN_PROGRESS',
+            message: 'Webhook event is still being processed; retry later',
+          },
+        },
+        { status: 503 },
+      );
+    }
 
     return NextResponse.json(
       {
@@ -76,8 +112,8 @@ export async function POST(request: NextRequest) {
       },
       { status: 200 },
     );
-  } catch (error) {
-    console.error('Webhook processing error:', error);
+  } catch {
+    console.error('Webhook processing failed.');
     return NextResponse.json(
       {
         success: false,

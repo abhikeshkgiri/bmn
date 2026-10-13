@@ -26,6 +26,11 @@ interface IPayment extends Document {
   paidAt?: Date;
   refundAmount?: number; // in paise
   processedRefundIds: string[];
+  activeBookingKey?: Types.ObjectId;
+  refundRequestId?: string | null;
+  refundRequestAmount?: number | null;
+  refundProviderId?: string | null;
+  refundRequestStatus?: 'REQUESTED' | 'PENDING' | 'UNKNOWN' | null;
   metadata?: Record<string, unknown>; // Additional payment provider data
   createdAt: Date;
   updatedAt: Date;
@@ -38,6 +43,10 @@ const PaymentSchema = new Schema<IPayment>(
       ref: 'Booking',
       required: false,
       index: true,
+    },
+    activeBookingKey: {
+      type: Schema.Types.ObjectId,
+      default: undefined,
     },
     membership: { type: Schema.Types.ObjectId, ref: 'CustomerMembership', default: null, index: true },
     customer: {
@@ -97,6 +106,14 @@ const PaymentSchema = new Schema<IPayment>(
       min: 0,
     },
     processedRefundIds: { type: [String], default: [] },
+    refundRequestId: { type: String, default: null },
+    refundRequestAmount: { type: Number, min: 1, default: null },
+    refundProviderId: { type: String, default: null },
+    refundRequestStatus: {
+      type: String,
+      enum: ['REQUESTED', 'PENDING', 'UNKNOWN', null],
+      default: null,
+    },
     metadata: {
       type: Schema.Types.Mixed,
       default: {},
@@ -104,6 +121,13 @@ const PaymentSchema = new Schema<IPayment>(
   },
   { timestamps: true }
 );
+
+PaymentSchema.index({ activeBookingKey: 1 }, { unique: true, sparse: true });
+PaymentSchema.index(
+  { 'metadata.reconciliationRequired': 1, updatedAt: 1 },
+  { partialFilterExpression: { 'metadata.reconciliationRequired': true } },
+);
+PaymentSchema.index({ refundRequestStatus: 1, updatedAt: 1 });
 
 // Prevent OverwriteModelError
 const Payment = mongoose.models.Payment || mongoose.model<IPayment>('Payment', PaymentSchema);

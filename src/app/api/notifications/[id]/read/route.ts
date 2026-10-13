@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { markNotificationAsRead } from '@/services/notification.service';
+import { NotificationIdSchema } from '@/validations/notification.schema';
 
 export async function POST(
   _request: NextRequest,
@@ -16,11 +17,25 @@ export async function POST(
     }
 
     const { id } = await params;
+    if (!NotificationIdSchema.safeParse(id).success) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_ID', message: 'Notification ID is invalid' } },
+        { status: 400 },
+      );
+    }
     const notification = await markNotificationAsRead(id, currentUser);
 
     return NextResponse.json({
       success: true,
-      data: notification,
+      data: {
+        _id: notification._id,
+        title: notification.title,
+        message: notification.message,
+        type: notification.type,
+        bookingId: notification.bookingId ?? null,
+        isRead: notification.isRead,
+        readAt: notification.readAt ?? null,
+      },
     });
   } catch (error) {
     const err = error as { code?: string; message?: string };

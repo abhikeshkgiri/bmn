@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { deleteNotification } from '@/services/notification.service';
+import { NotificationIdSchema } from '@/validations/notification.schema';
 
 export async function DELETE(
   _request: NextRequest,
@@ -16,6 +17,12 @@ export async function DELETE(
     }
 
     const { id } = await params;
+    if (!NotificationIdSchema.safeParse(id).success) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_ID', message: 'Notification ID is invalid' } },
+        { status: 400 },
+      );
+    }
     const deleted = await deleteNotification(id, currentUser);
 
     return NextResponse.json({

@@ -59,6 +59,7 @@ interface ISalon extends Document {
   rejectionReason?: string | null;
   approvalUpdatedAt?: Date | null;
   approvalUpdatedBy?: Types.ObjectId | null;
+  demoKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -321,6 +322,7 @@ const SalonSchema = new Schema<ISalon>(
       ref: 'User',
       default: null,
     },
+    demoKey: { type: String, trim: true, maxlength: 120, select: false },
     isActive: {
       type: Boolean,
       default: true,

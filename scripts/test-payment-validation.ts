@@ -5,14 +5,21 @@ import {
   verifyWebhookSignatureWithSecret,
 } from '../src/lib/razorpay';
 import {
+  canTransitionPaymentToFailed,
+  isBookingEligibleForCapturedPayment,
+  isRefundPending,
+  isWebhookLeaseExpired,
   isProviderPaymentCaptured,
   isProviderPaymentMatching,
   isRefundWithinBalance,
 } from '../src/utils/payment';
 import {
+  CreatePaymentOrderSchema,
   PaymentFailureSchema,
   VerifyPaymentSchema,
 } from '../src/validations/payment.schema';
+import Payment from '../src/models/Payment';
+import WebhookEvent from '../src/models/WebhookEvent';
 
 const orderId = 'order_abc123';
 const paymentId = 'pay_xyz789';
@@ -47,6 +54,15 @@ assert.equal(PaymentFailureSchema.safeParse({
   razorpay_order_id: orderId,
   error_description: 'x'.repeat(501),
 }).success, false);
+assert.equal(CreatePaymentOrderSchema.safeParse({
+  bookingId: '64b000000000000000000001',
+  amount: 1,
+}).success, false);
+assert.equal(PaymentFailureSchema.safeParse({
+  bookingId: '64b000000000000000000001',
+  razorpay_order_id: orderId,
+  paymentStatus: 'PAID',
+}).success, false);
 
 const expectedPayment = { orderId, amount: 12500, currency: 'INR' };
 assert.equal(isProviderPaymentMatching({
@@ -71,5 +87,49 @@ assert.equal(isRefundWithinBalance(300, 200, 500), true);
 assert.equal(isRefundWithinBalance(301, 200, 500), false);
 assert.equal(isRefundWithinBalance(0, 0, 500), false);
 assert.equal(isRefundWithinBalance(1.5, 0, 500), false);
+assert.equal(isRefundWithinBalance(100, 300, 500, 100), true);
+assert.equal(isRefundWithinBalance(101, 300, 500, 100), false);
+assert.equal(isBookingEligibleForCapturedPayment(
+  'PENDING',
+  'PENDING',
+  new Date(2000),
+  true,
+  new Date(1000),
+), true);
+assert.equal(isBookingEligibleForCapturedPayment(
+  'PENDING',
+  'PENDING',
+  new Date(1000),
+  true,
+  new Date(1000),
+), false);
+assert.equal(isBookingEligibleForCapturedPayment(
+  'CANCELLED',
+  'PENDING',
+  new Date(2000),
+  true,
+  new Date(1000),
+), false);
+assert.equal(isBookingEligibleForCapturedPayment(
+  'PENDING',
+  'PENDING',
+  new Date(2000),
+  false,
+  new Date(1000),
+), false);
+assert.equal(canTransitionPaymentToFailed('PENDING'), true);
+assert.equal(canTransitionPaymentToFailed('AUTHORIZED'), true);
+assert.equal(canTransitionPaymentToFailed('PAID'), false);
+assert.equal(isWebhookLeaseExpired(new Date(1000), new Date(1000)), true);
+assert.equal(isWebhookLeaseExpired(new Date(1001), new Date(1000)), false);
+assert.equal(isWebhookLeaseExpired(null, new Date(1000)), true);
+assert.equal(isRefundPending('REQUESTED'), true);
+assert.equal(isRefundPending('UNKNOWN'), true);
+assert.equal(isRefundPending(null), false);
+assert.equal(Payment.schema.indexes().some(([keys, options]) =>
+  'activeBookingKey' in keys && options?.unique === true && options?.sparse === true,
+), true);
+assert.equal(WebhookEvent.schema.path('eventId').options.unique, true);
+assert.equal(WebhookEvent.schema.path('leaseExpiresAt') != null, true);
 
 console.log('Payment validation and provider-integrity tests passed.');

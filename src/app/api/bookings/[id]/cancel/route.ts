@@ -60,8 +60,30 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (booking.paymentStatus === PAYMENT_STATUS.PAID) {
       try {
         const payment = await getPaymentByBooking(id, currentUser);
-        if (payment && payment.status === PAYMENT_STATUS.PAID) {
-          await processRefund(payment._id.toString(), payment.amount, 'Booking cancelled by customer', currentUser);
+        if (
+          payment &&
+          (payment.status === PAYMENT_STATUS.PAID ||
+            payment.status === PAYMENT_STATUS.PARTIALLY_REFUNDED)
+        ) {
+          const refundPayment = await processRefund(
+            payment._id.toString(),
+            undefined,
+            'Booking cancelled by customer',
+            currentUser,
+          );
+          if (refundPayment.refundRequestId) {
+            return NextResponse.json(
+              {
+                success: true,
+                data: booking,
+                warning: {
+                  code: 'REFUND_PENDING',
+                  message: 'Booking cancelled. Refund initiation is awaiting provider confirmation.',
+                },
+              },
+              { status: 200 },
+            );
+          }
         }
       } catch (refundError) {
         console.error('Refund processing failed:', refundError);

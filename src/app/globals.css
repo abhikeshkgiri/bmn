@@ -170,3 +170,14 @@ button {
   cursor: pointer;
   font-family: inherit;
 }
+
+p.text-sm.font-semibold.uppercase.tracking-\[0\.2em\].text-white.custom {
+    color: white;
+}
+
+h2.mt-3.text-3xl.font-bold.text-white.md\:text-4xl.custom{
+ color: white;
+}
+p.mt-4.text-white.custom {
+    color: white;
+}

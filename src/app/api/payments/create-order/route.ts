@@ -67,7 +67,11 @@ export async function POST(request: NextRequest) {
             ? 403
             : paymentError.code === 'BOOKING_NOT_FOUND'
               ? 404
-              : 400;
+                : paymentError.code === 'ORDER_CREATION_IN_PROGRESS'
+                  ? 409
+                  : paymentError.code === 'ORDER_CREATION_UNKNOWN'
+                    ? 409
+                  : 400;
 
       return NextResponse.json(
         {

@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { unsubscribeFromPushNotifications } from '@/services/push.service';
+import { PushUnsubscribeSchema } from '@/validations/notification.schema';
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,10 +19,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const { endpoint } = body;
-
-    if (!endpoint) {
+    const parsed = PushUnsubscribeSchema.safeParse(await request.json());
+    if (!parsed.success) {
       return NextResponse.json(
         {
           success: false,
@@ -31,13 +30,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await unsubscribeFromPushNotifications(currentUser._id, endpoint);
+    await unsubscribeFromPushNotifications(currentUser._id, parsed.data.endpoint);
 
     return NextResponse.json(
       { success: true, message: 'Unsubscribed successfully' },
       { status: 200 }
     );
   } catch (error) {
+    if (error instanceof SyntaxError) {
+      return NextResponse.json(
+        { success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid JSON body' } },
+        { status: 400 },
+      );
+    }
     console.error('Error unsubscribing from push notifications:', error);
     return NextResponse.json(
       { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to unsubscribe' } },

@@ -11,6 +11,7 @@ interface IUser extends Document {
   isActive: boolean;
   isVerified: boolean;
   notificationPreferences?: { inApp: boolean; push: boolean };
+  demoKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -63,6 +64,7 @@ const UserSchema = new Schema<IUser>(
       inApp: { type: Boolean, default: true },
       push: { type: Boolean, default: true },
     },
+    demoKey: { type: String, trim: true, maxlength: 120, select: false },
   },
   { timestamps: true }
 );

@@ -13,6 +13,7 @@ interface NotificationItem {
   isRead: boolean;
   createdAt: string;
   type: string;
+  bookingHref: string | null;
 }
 
 export default function NotificationsPage() {
@@ -161,6 +162,14 @@ export default function NotificationsPage() {
                         <div className="mt-2 text-xs text-foreground-muted">
                           {new Date(notification.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
                         </div>
+                        {notification.bookingHref && (
+                          <Link
+                            href={notification.bookingHref}
+                            className="mt-2 inline-block text-sm font-medium text-brand-pink hover:underline"
+                          >
+                            View booking
+                          </Link>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         {!notification.isRead && (

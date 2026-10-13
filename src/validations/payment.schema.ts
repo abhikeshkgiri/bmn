@@ -14,7 +14,7 @@ const mongoIdSchema = z.string().regex(/^[0-9a-f]{24}$/i, 'Invalid MongoDB ID');
  */
 export const CreatePaymentOrderSchema = z.object({
   bookingId: mongoIdSchema,
-});
+}).strict();
 
 export type CreatePaymentOrderInput = z.infer<typeof CreatePaymentOrderSchema>;
 
@@ -27,7 +27,7 @@ export const VerifyPaymentSchema = z.object({
   razorpay_order_id: z.string().regex(/^order_[A-Za-z0-9]+$/, 'Invalid order ID'),
   razorpay_payment_id: z.string().regex(/^pay_[A-Za-z0-9]+$/, 'Invalid payment ID'),
   razorpay_signature: z.string().regex(/^[a-f\d]{64}$/i, 'Invalid payment signature'),
-});
+}).strict();
 
 export type VerifyPaymentInput = z.infer<typeof VerifyPaymentSchema>;
 
@@ -40,7 +40,7 @@ export const PaymentFailureSchema = z.object({
   razorpay_order_id: z.string().regex(/^order_[A-Za-z0-9]+$/, 'Invalid order ID'),
   error_code: z.string().max(100).optional(),
   error_description: z.string().max(500).optional(),
-});
+}).strict();
 
 export type PaymentFailureInput = z.infer<typeof PaymentFailureSchema>;
 
@@ -52,7 +52,7 @@ export const RefundSchema = z.object({
   paymentId: mongoIdSchema,
   amount: z.number().int().min(1, 'Amount must be at least 1 paise'),
   reason: z.string().max(500, 'Reason must be less than 500 characters').optional(),
-});
+}).strict();
 
 export type RefundInput = z.infer<typeof RefundSchema>;
 
@@ -62,6 +62,6 @@ export type RefundInput = z.infer<typeof RefundSchema>;
  */
 export const PaymentDetailsQuerySchema = z.object({
   bookingId: mongoIdSchema,
-});
+}).strict();
 
 export type PaymentDetailsQuery = z.infer<typeof PaymentDetailsQuerySchema>;

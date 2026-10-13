@@ -72,6 +72,8 @@ export async function GET(
           provider: payment.provider,
           status: payment.status,
           refundAmount: payment.refundAmount || 0,
+          refundPending: Boolean(payment.refundRequestId),
+          refundRequestStatus: payment.refundRequestStatus ?? null,
           createdAt: payment.createdAt,
           updatedAt: payment.updatedAt,
           paidAt: payment.paidAt ?? null,

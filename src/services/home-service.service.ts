@@ -17,6 +17,7 @@ import {
   notifyBookingCancelled,
   notifyBookingCompleted,
   notifyBookingCreated,
+  runNotificationSafely,
 } from '@/services/notification.service';
 
 const REQUEST_TIMEOUT_MINUTES = Number(process.env.HOME_SERVICE_REQUEST_TIMEOUT_MINUTES ?? 15);
@@ -124,7 +125,9 @@ export async function createHomeServiceBooking(input: {
   if (!createdId) throw HOME_SERVICE_ERRORS.INVALID_REQUEST;
   const created = await Booking.findById(createdId);
   if (!created) throw HOME_SERVICE_ERRORS.INVALID_REQUEST;
-  await notifyBookingCreated(created._id.toString());
+  await runNotificationSafely('home-service-booking-created', () =>
+    notifyBookingCreated(created._id.toString()),
+  );
   return created;
 }
 
@@ -162,7 +165,9 @@ export async function transitionHomeService(actor: AuthUser, id: string, next: H
   const updated = await Booking.findOneAndUpdate({ _id: id, homeServiceStatus: booking.homeServiceStatus }, { $set: { homeServiceStatus: next, ...([HomeServiceStatus.CANCELLED, HomeServiceStatus.REJECTED].includes(next) ? { status: BOOKING_STATUS.CANCELLED } : {}), ...(timestampField[next] && timestamp[next] ? { [timestampField[next]]: timestamp[next] } : {}) } }, { new: true });
   if (!updated) throw HOME_SERVICE_ERRORS.INVALID_TRANSITION;
   if (next === HomeServiceStatus.CANCELLED || next === HomeServiceStatus.REJECTED) {
-    await notifyBookingCancelled(id);
+    await runNotificationSafely('home-service-booking-cancelled', () =>
+      notifyBookingCancelled(id),
+    );
   }
   await recordAuditEvent({ actor, action: `HOME_SERVICE_${next}`, entityType: 'Booking', entityId: id });
   return updated;
@@ -179,7 +184,9 @@ export async function completeHomeService(actor: AuthUser, id: string) {
     { new: true },
   );
   if (!updated) throw HOME_SERVICE_ERRORS.INVALID_TRANSITION;
-  await notifyBookingCompleted(id);
+  await runNotificationSafely('home-service-booking-completed', () =>
+    notifyBookingCompleted(id),
+  );
   await recordAuditEvent({ actor, action: 'HOME_SERVICE_COMPLETED', entityType: 'Booking', entityId: id });
   return updated;
 }

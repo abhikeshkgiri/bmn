@@ -15,6 +15,7 @@ interface IService extends Document {
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
+  demoKey?: string;
 }
 
 const ServiceSchema = new Schema<IService>(
@@ -74,6 +75,7 @@ const ServiceSchema = new Schema<IService>(
       default: true,
       index: true,
     },
+    demoKey: { type: String, trim: true, maxlength: 120, select: false },
   },
   { timestamps: true }
 );

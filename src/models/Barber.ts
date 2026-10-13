@@ -29,6 +29,7 @@ interface IBarber extends Document {
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
+  demoKey?: string;
 }
 
 const PortfolioItemSchema = new Schema<IPortfolioItem>(
@@ -145,6 +146,7 @@ const BarberSchema = new Schema<IBarber>(
       default: true,
       index: true,
     },
+    demoKey: { type: String, trim: true, maxlength: 120, select: false },
   },
   { timestamps: true }
 );

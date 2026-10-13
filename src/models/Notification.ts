@@ -23,6 +23,9 @@ interface INotification extends Document {
   priority?: NotificationPriority;
   channel?: NotificationChannel;
   metadata?: Record<string, unknown>;
+  pushDeliveryStatus: 'NOT_ATTEMPTED' | 'SKIPPED' | 'SENT' | 'PARTIAL' | 'FAILED';
+  pushAttempts: number;
+  pushDeliveredCount: number;
   isRead: boolean;
   readAt?: Date;
   createdAt: Date;
@@ -97,6 +100,13 @@ const NotificationSchema = new Schema<INotification>(
       type: Schema.Types.Mixed,
       default: {},
     },
+    pushDeliveryStatus: {
+      type: String,
+      enum: ['NOT_ATTEMPTED', 'SKIPPED', 'SENT', 'PARTIAL', 'FAILED'],
+      default: 'NOT_ATTEMPTED',
+    },
+    pushAttempts: { type: Number, default: 0, min: 0 },
+    pushDeliveredCount: { type: Number, default: 0, min: 0 },
     isRead: {
       type: Boolean,
       default: false,

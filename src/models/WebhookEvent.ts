@@ -10,6 +10,8 @@ export interface IWebhookEvent extends Document {
   attempts: number;
   lastError?: string;
   processedAt?: Date;
+  claimToken?: string;
+  leaseExpiresAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -22,6 +24,8 @@ const WebhookEventSchema = new Schema<IWebhookEvent>(
     attempts: { type: Number, default: 0 },
     lastError: { type: String, default: null },
     processedAt: { type: Date, default: null },
+    claimToken: { type: String, default: null },
+    leaseExpiresAt: { type: Date, default: null, index: true },
   },
   { timestamps: true },
 );

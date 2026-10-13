@@ -44,6 +44,7 @@ import {
   notifyBookingConfirmed,
   notifyBookingCompleted,
   notifyBookingRescheduled,
+  runNotificationSafely,
 } from '@/services/notification.service';
 import mongoose from 'mongoose';
 import { recordAuditEvent } from '@/services/audit.service';
@@ -699,7 +700,9 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
       throw new Error('BOOKING_CREATION_FAILED');
     }
 
-    await notifyBookingCreated(bookingToReturn._id.toString());
+    await runNotificationSafely('booking-created', () =>
+      notifyBookingCreated(bookingToReturn._id.toString()),
+    );
 
     return bookingToReturn;
   } catch (error) {
@@ -1064,7 +1067,9 @@ export async function cancelBooking(
   }
 
   const populatedBooking = await cancelledBooking.populate(['customer', 'salon', 'barber', 'service']);
-  await notifyBookingCancelled(populatedBooking._id.toString());
+  await runNotificationSafely('booking-cancelled', () =>
+    notifyBookingCancelled(populatedBooking._id.toString()),
+  );
   void recordAuditEvent({
     actor: currentUser,
     action: 'BOOKING_CANCELLED',
@@ -1142,15 +1147,21 @@ export async function updateBookingStatus(
   const populatedBooking = await updatedBooking.populate(['customer', 'salon', 'barber', 'service']);
 
   if (newStatus === BOOKING_STATUS.CONFIRMED) {
-    await notifyBookingConfirmed(populatedBooking._id.toString());
+    await runNotificationSafely('booking-confirmed', () =>
+      notifyBookingConfirmed(populatedBooking._id.toString()),
+    );
   }
 
   if (newStatus === BOOKING_STATUS.CANCELLED) {
-    await notifyBookingCancelled(populatedBooking._id.toString());
+    await runNotificationSafely('booking-cancelled', () =>
+      notifyBookingCancelled(populatedBooking._id.toString()),
+    );
   }
 
   if (newStatus === BOOKING_STATUS.COMPLETED) {
-    await notifyBookingCompleted(populatedBooking._id.toString());
+    await runNotificationSafely('booking-completed', () =>
+      notifyBookingCompleted(populatedBooking._id.toString()),
+    );
   }
 
   if (newStatus === BOOKING_STATUS.COMPLETED) {
@@ -1401,11 +1412,14 @@ export async function rescheduleBooking(
     metadata: { appointmentDate: newAppointmentDate, startTime: newStartTime },
   });
 
-  if (!transactionResult.booking) throw BOOKING_ERRORS.BOOKING_NOT_FOUND;
-  await notifyBookingRescheduled(
-    bookingId,
-    transactionResult.booking.appointmentDate,
-    transactionResult.booking.startTime,
+  const updatedBooking = transactionResult.booking;
+  if (!updatedBooking) throw BOOKING_ERRORS.BOOKING_NOT_FOUND;
+  await runNotificationSafely('booking-rescheduled', () =>
+    notifyBookingRescheduled(
+      bookingId,
+      updatedBooking.appointmentDate,
+      updatedBooking.startTime,
+    ),
   );
-  return transactionResult.booking.populate(['customer', 'salon', 'barber', 'service']);
+  return updatedBooking.populate(['customer', 'salon', 'barber', 'service']);
 }

@@ -1,9 +1,11 @@
 import { Types } from 'mongoose';
 import Notification, { type INotification } from '@/models/Notification';
 import Booking from '@/models/Booking';
+import Payment from '@/models/Payment';
 import Salon from '@/models/Salon';
 import Barber from '@/models/Barber';
 import User from '@/models/User';
+import { sendPushNotificationToUser } from '@/services/push.service';
 import { connectDB } from '@/lib/db';
 import type { AuthUser } from '@/types';
 import { USER_ROLES } from '@/constants/roles';
@@ -11,6 +13,7 @@ import { NOTIFICATION_PRIORITY, NOTIFICATION_TYPES, type NotificationType } from
 import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
 import {
   getBookingNotificationEventKey,
+  getCustomerNotificationChannel,
   isAppointmentReminderEligible,
   type AppointmentReminderType,
 } from '@/utils/notification';
@@ -45,10 +48,24 @@ export async function createNotification(input: NotificationCreateInput): Promis
   await connectDB();
 
   const recipientId = new Types.ObjectId(input.recipientId);
-  const channel = input.channel ?? 'IN_APP';
-  if (input.recipientRole === USER_ROLES.CUSTOMER && channel === 'IN_APP') {
-    const customer = await User.findById(recipientId).select('notificationPreferences.inApp');
-    if (customer?.notificationPreferences?.inApp === false) return null;
+  let channel = input.channel ?? 'IN_APP';
+  if (channel !== 'IN_APP' && channel !== 'PUSH') {
+    throw new Error(`NOTIFICATION_CHANNEL_UNSUPPORTED:${channel}`);
+  }
+  if (input.recipientRole === USER_ROLES.CUSTOMER) {
+    const customer = await User.findById(recipientId).select(
+      'notificationPreferences.inApp notificationPreferences.push',
+    );
+    if (channel === 'IN_APP') {
+      const preferredChannel = getCustomerNotificationChannel(
+        customer?.notificationPreferences?.inApp,
+        customer?.notificationPreferences?.push,
+      );
+      if (!preferredChannel) return null;
+      channel = preferredChannel;
+    } else if (customer?.notificationPreferences?.push === false) {
+      return null;
+    }
   }
 
   const notificationData = {
@@ -67,24 +84,53 @@ export async function createNotification(input: NotificationCreateInput): Promis
     ...(input.eventKey ? { eventKey: input.eventKey } : {}),
   };
 
-  if (!input.eventKey) {
-    return Notification.create(notificationData);
-  }
-
+  let notification: INotification;
+  let inserted = true;
   try {
-    const notification = await Notification.findOneAndUpdate(
-      { recipientId, eventKey: input.eventKey },
-      { $setOnInsert: notificationData },
-      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
-    );
-    if (!notification) throw new Error('NOTIFICATION_UPSERT_FAILED');
-    return notification;
+    notification = await Notification.create(notificationData);
   } catch (error) {
-    if (!isDuplicateKeyError(error)) throw error;
+    if (!input.eventKey || !isDuplicateKeyError(error)) throw error;
     const existing = await Notification.findOne({ recipientId, eventKey: input.eventKey });
     if (!existing) throw error;
-    return existing;
+    notification = existing;
+    inserted = false;
   }
+
+  if (inserted && (channel === 'IN_APP' || channel === 'PUSH')) {
+    try {
+      const delivery = await sendPushNotificationToUser(input.recipientId, {
+        title: input.title,
+        body: input.message,
+        data: {
+          url: input.bookingId ? getBookingNotificationHref(input.recipientRole, input.bookingId) : '/notifications',
+        },
+      });
+      notification.pushDeliveryStatus = delivery.status;
+      notification.pushAttempts = delivery.attempted > 0 ? 1 : 0;
+      notification.pushDeliveredCount = delivery.sent;
+      await notification.save();
+    } catch (error) {
+      notification.pushDeliveryStatus = 'FAILED';
+      notification.pushAttempts = 1;
+      await notification.save();
+      const errorName = error instanceof Error ? error.name : 'UnknownError';
+      console.error('Push notification delivery status update failed', { errorName });
+    }
+  }
+
+  return notification;
+}
+
+function getBookingNotificationHref(
+  recipientRole: NotificationCreateInput['recipientRole'],
+  bookingId: string,
+): string {
+  if (recipientRole === USER_ROLES.CUSTOMER) return `/booking/${bookingId}`;
+  if (recipientRole === USER_ROLES.BARBER) return '/barber/bookings';
+  if (recipientRole === USER_ROLES.SALON_OWNER || recipientRole === USER_ROLES.SALON_STAFF) {
+    return '/salon/bookings';
+  }
+  return '/notifications';
 }
 
 export async function createBulkNotifications(inputs: NotificationCreateInput[]): Promise<INotification[]> {
@@ -109,9 +155,12 @@ export async function getUserNotifications(
 ): Promise<{ notifications: INotification[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
   await connectDB();
 
-  const page = options.page && options.page > 0 ? options.page : 1;
-  const limit = options.limit && options.limit > 0 ? Math.min(options.limit, 50) : 20;
-  const query: Record<string, unknown> = { recipientId: new Types.ObjectId(userId) };
+  const page = options.page ?? 1;
+  const limit = options.limit ?? 20;
+  const query: Record<string, unknown> = {
+    recipientId: new Types.ObjectId(userId),
+    channel: 'IN_APP',
+  };
 
   if (options.unread) {
     query.isRead = false;
@@ -143,24 +192,36 @@ export async function getUserNotifications(
 
 export async function getUnreadNotificationCount(userId: string): Promise<number> {
   await connectDB();
-  return Notification.countDocuments({ recipientId: new Types.ObjectId(userId), isRead: false });
+  return Notification.countDocuments({
+    recipientId: new Types.ObjectId(userId),
+    channel: 'IN_APP',
+    isRead: false,
+  });
 }
 
 export async function markNotificationAsRead(notificationId: string, currentUser: AuthUser): Promise<INotification> {
   await connectDB();
 
-  const notification = await Notification.findById(notificationId);
+  const notification = await Notification.findOneAndUpdate(
+    { _id: notificationId, recipientId: new Types.ObjectId(currentUser._id), channel: 'IN_APP', isRead: false },
+    { $set: { isRead: true, readAt: new Date() } },
+    { new: true },
+  );
   if (!notification) {
-    throw { code: 'NOTIFICATION_NOT_FOUND', message: 'Notification not found' };
+    const exists = await Notification.exists({
+      _id: notificationId,
+      recipientId: currentUser._id,
+      channel: 'IN_APP',
+    });
+    if (!exists) throw { code: 'NOTIFICATION_NOT_FOUND', message: 'Notification not found' };
+    const alreadyRead = await Notification.findOne({
+      _id: notificationId,
+      recipientId: currentUser._id,
+      channel: 'IN_APP',
+    });
+    if (!alreadyRead) throw { code: 'NOTIFICATION_NOT_FOUND', message: 'Notification not found' };
+    return alreadyRead;
   }
-
-  if (notification.recipientId.toString() !== currentUser._id) {
-    throw { code: 'FORBIDDEN', message: 'You do not have access to this notification' };
-  }
-
-  notification.isRead = true;
-  notification.readAt = new Date();
-  await notification.save();
 
   return notification;
 }
@@ -169,7 +230,7 @@ export async function markAllNotificationsAsRead(userId: string): Promise<number
   await connectDB();
 
   const result = await Notification.updateMany(
-    { recipientId: new Types.ObjectId(userId), isRead: false },
+    { recipientId: new Types.ObjectId(userId), channel: 'IN_APP', isRead: false },
     { $set: { isRead: true, readAt: new Date() } }
   );
 
@@ -179,17 +240,24 @@ export async function markAllNotificationsAsRead(userId: string): Promise<number
 export async function deleteNotification(notificationId: string, currentUser: AuthUser): Promise<boolean> {
   await connectDB();
 
-  const notification = await Notification.findById(notificationId);
-  if (!notification) {
-    throw { code: 'NOTIFICATION_NOT_FOUND', message: 'Notification not found' };
-  }
-
-  if (notification.recipientId.toString() !== currentUser._id) {
-    throw { code: 'FORBIDDEN', message: 'You do not have access to this notification' };
-  }
-
-  const result = await Notification.deleteOne({ _id: notificationId });
+  const result = await Notification.deleteOne({
+    _id: notificationId,
+    recipientId: new Types.ObjectId(currentUser._id),
+    channel: 'IN_APP',
+  });
   return result.deletedCount > 0;
+}
+
+export async function runNotificationSafely(
+  eventName: string,
+  dispatch: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await dispatch();
+  } catch (error) {
+    const errorName = error instanceof Error ? error.name : 'UnknownError';
+    console.error('Notification dispatch failed', { eventName, errorName });
+  }
 }
 
 function getObjectId(value: unknown): string | null {
@@ -592,7 +660,11 @@ export async function notifyPaymentFailed(bookingId: string, message?: string): 
 
 export async function notifyPaymentRefunded(bookingId: string): Promise<INotification[]> {
   const booking = await Booking.findById(bookingId).populate(['customer']);
-  if (!booking || booking.paymentStatus !== PAYMENT_STATUS.REFUNDED) {
+  const refundedPayment = await Payment.exists({
+    booking: bookingId,
+    status: PAYMENT_STATUS.REFUNDED,
+  });
+  if (!booking || booking.paymentStatus !== PAYMENT_STATUS.REFUNDED || !refundedPayment) {
     return [];
   }
 

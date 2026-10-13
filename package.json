@@ -11,6 +11,8 @@
     "test:customer-profile": "node scripts/test-customer-profile-runner.cjs",
     "test:notifications": "node scripts/test-notifications-runner.cjs",
     "test:salon-discovery": "node scripts/test-salon-discovery-runner.cjs",
+    "test:feature22-demo": "node scripts/test-feature22-demo-runner.cjs",
+    "seed:feature22-demo": "node scripts/seed-feature22-runner.cjs",
     "test:salon-onboarding": "node scripts/test-salon-onboarding-runner.cjs",
     "test:service-barber-validation": "node scripts/test-service-barber-validation-runner.cjs",
     "test:phase21": "node scripts/test-phase21-runner.cjs",

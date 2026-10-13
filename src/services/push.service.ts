@@ -27,6 +27,16 @@ export interface PushNotificationPayload {
   data?: Record<string, any>;
 }
 
+export interface PushDeliveryResult {
+  status: 'SKIPPED' | 'SENT' | 'PARTIAL' | 'FAILED';
+  attempted: number;
+  sent: number;
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 11000;
+}
+
 /**
  * Subscribe user to push notifications
  */
@@ -61,16 +71,30 @@ export async function subscribeToPushNotifications(
   }
 
   // Create new subscription
-  const pushSub = await PushSubscription.create({
-    user: new Types.ObjectId(userId),
-    endpoint: subscription.endpoint,
-    auth: subscription.auth,
-    p256dh: subscription.p256dh,
-    userAgent: subscription.userAgent || null,
-    isActive: true,
-  });
+  try {
+    return await PushSubscription.create({
+      user: new Types.ObjectId(userId),
+      endpoint: subscription.endpoint,
+      auth: subscription.auth,
+      p256dh: subscription.p256dh,
+      userAgent: subscription.userAgent || null,
+      isActive: true,
+    });
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) throw error;
 
-  return pushSub;
+    const racedSubscription = await PushSubscription.findOne({ endpoint: subscription.endpoint });
+    if (!racedSubscription || racedSubscription.user.toString() !== userId) {
+      throw new Error('PUSH_SUBSCRIPTION_OWNERSHIP_CONFLICT');
+    }
+
+    racedSubscription.auth = subscription.auth;
+    racedSubscription.p256dh = subscription.p256dh;
+    racedSubscription.isActive = true;
+    racedSubscription.userAgent = subscription.userAgent || null;
+    await racedSubscription.save();
+    return racedSubscription;
+  }
 }
 
 /**
@@ -126,24 +150,26 @@ export async function isUserSubscribedToPush(userId: string): Promise<boolean> {
  */
 export async function sendPushNotificationToUser(
   userId: string,
-  _payload: PushNotificationPayload,
-): Promise<number> {
+  payload: PushNotificationPayload,
+): Promise<PushDeliveryResult> {
   await connectDB();
 
   const subscriptions = await getUserPushSubscriptions(userId);
 
   if (subscriptions.length === 0) {
-    return 0;
+    return { status: 'SKIPPED', attempted: 0, sent: 0 };
   }
 
   const publicKey = process.env.PUSH_VAPID_PUBLIC_KEY;
   const privateKey = process.env.PUSH_VAPID_PRIVATE_KEY;
   const subject = process.env.PUSH_VAPID_SUBJECT;
   if (!publicKey || !privateKey || !subject) {
-    return 0;
+    return { status: 'SKIPPED', attempted: 0, sent: 0 };
   }
   const user = await User.findById(userId).select('notificationPreferences.push');
-  if (user?.notificationPreferences?.push === false) return 0;
+  if (user?.notificationPreferences?.push === false) {
+    return { status: 'SKIPPED', attempted: 0, sent: 0 };
+  }
 
   webpush.setVapidDetails(subject, publicKey, privateKey);
   let sent = 0;
@@ -154,7 +180,7 @@ export async function sendPushNotificationToUser(
           endpoint: sub.endpoint,
           keys: { auth: sub.auth, p256dh: sub.p256dh },
         },
-        JSON.stringify(_payload),
+        JSON.stringify(payload),
       );
       await PushSubscription.findByIdAndUpdate(sub._id, { lastNotificationSent: new Date() });
       sent += 1;
@@ -169,7 +195,15 @@ export async function sendPushNotificationToUser(
     }
   }
 
-  return sent;
+  return {
+    status: sent === subscriptions.length
+      ? 'SENT'
+      : sent > 0
+        ? 'PARTIAL'
+        : 'FAILED',
+    attempted: subscriptions.length,
+    sent,
+  };
 }
 
 /**
