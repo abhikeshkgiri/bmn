@@ -73,25 +73,29 @@ export default function SalonDashboardRoutePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    const controller = new AbortController();
     const load = async () => {
       try {
-        const authResponse = await fetch('/api/auth/me');
+        setLoading(true);
+        setError(null);
+        const authResponse = await fetch('/api/auth/me', { signal: controller.signal });
         if (!authResponse.ok) {
-          router.push('/login');
+          router.replace('/login?next=%2Fdashboard%2Fsalon');
           return;
         }
 
         const userData = await authResponse.json();
-        const allowed = [USER_ROLES.SALON_OWNER, USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(userData?.user?.role);
+        const allowed = [USER_ROLES.SALON_OWNER, USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN]
+          .includes(userData?.user?.role);
         if (!allowed) {
           setError('You do not have access to the salon dashboard');
-          setLoading(false);
           return;
         }
 
-        const response = await fetch('/api/dashboard/salon/stats');
+        const response = await fetch('/api/dashboard/salon/stats', { signal: controller.signal });
         const result = await response.json();
         if (response.status === 404 && result?.error?.code === 'SALON_NOT_FOUND') {
           router.replace('/salon/onboarding');
@@ -103,14 +107,16 @@ export default function SalonDashboardRoutePage() {
 
         setData(result.data);
       } catch (err) {
+        if (controller.signal.aborted) return;
         setError(err instanceof Error ? err.message : 'Failed to load dashboard');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
 
-    load();
-  }, [router]);
+    void load();
+    return () => controller.abort();
+  }, [reloadKey, router]);
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50"><Spinner size="lg" /></div>;
@@ -123,9 +129,10 @@ export default function SalonDashboardRoutePage() {
           <Card className="p-8 text-center">
             <h1 className="text-2xl font-bold text-red-600 mb-2">Access denied</h1>
             <p className="text-foreground-secondary mb-6">{error}</p>
-            <Link href="/">
-              <Button variant="primary">Back to home</Button>
-            </Link>
+            <div className="flex justify-center gap-3">
+              <Button variant="outline" onClick={() => setReloadKey((key) => key + 1)}>Try again</Button>
+              <Link href="/"><Button variant="primary">Back to home</Button></Link>
+            </div>
           </Card>
         </div>
       </div>
@@ -133,7 +140,14 @@ export default function SalonDashboardRoutePage() {
   }
 
   if (!data) {
-    return null;
+    return (
+      <div className="min-h-screen bg-gray-50 p-6">
+        <Card className="mx-auto max-w-3xl p-8 text-center">
+          <p role="alert" className="mb-4 text-foreground-secondary">Dashboard information is currently unavailable.</p>
+          <Button variant="outline" onClick={() => setReloadKey((key) => key + 1)}>Try again</Button>
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -146,7 +160,11 @@ export default function SalonDashboardRoutePage() {
             <p className="text-foreground-secondary">{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
             {data.salon && (
               <p className="mt-2 text-sm font-medium">
-                Publication status: {data.salon.approvalStatus === 'REJECTED' ? 'Rejected' : (data.salon.approvalStatus === 'APPROVED' || (!data.salon.approvalStatus && data.salon.isVerified)) && data.salon.isActive ? 'Approved and published' : 'Pending admin review'}
+                Publication status: {data.salon.approvalStatus === 'REJECTED'
+                  ? 'Rejected'
+                  : (data.salon.approvalStatus === 'APPROVED' || (!data.salon.approvalStatus && data.salon.isVerified))
+                    ? data.salon.isActive ? 'Approved and published' : 'Approved, but not currently published'
+                    : 'Pending admin review'}
                 {data.salon.approvalStatus === 'REJECTED' && data.salon.rejectionReason ? ` — ${data.salon.rejectionReason}` : ''}
               </p>
             )}
@@ -164,7 +182,7 @@ export default function SalonDashboardRoutePage() {
           <Card className="p-5"><div className="flex items-center justify-between mb-3"><span className="text-sm text-foreground-secondary">Today</span><Calendar className="text-brand-pink" size={18} /></div><p className="text-3xl font-bold text-foreground">{data.stats.todayBookings}</p><p className="text-sm text-foreground-secondary">Appointments</p></Card>
           <Card className="p-5"><div className="flex items-center justify-between mb-3"><span className="text-sm text-foreground-secondary">Upcoming</span><Clock3 className="text-brand-pink" size={18} /></div><p className="text-3xl font-bold text-foreground">{data.stats.upcomingBookings}</p><p className="text-sm text-foreground-secondary">Next appointments</p></Card>
           <Card className="p-5"><div className="flex items-center justify-between mb-3"><span className="text-sm text-foreground-secondary">Completed</span><CheckCircle2 className="text-green-600" size={18} /></div><p className="text-3xl font-bold text-foreground">{data.stats.completedBookings}</p><p className="text-sm text-foreground-secondary">Finished</p></Card>
-          <Card className="p-5"><div className="flex items-center justify-between mb-3"><span className="text-sm text-foreground-secondary">Revenue</span><DollarSign className="text-green-600" size={18} /></div><p className="text-2xl font-bold text-foreground">{formatCurrency(data.stats.todayRevenue)}</p><p className="text-sm text-foreground-secondary">Paid today</p></Card>
+          <Card className="p-5"><div className="flex items-center justify-between mb-3"><span className="text-sm text-foreground-secondary">Paid booking value</span><DollarSign className="text-green-600" size={18} /></div><p className="text-2xl font-bold text-foreground">{formatCurrency(data.stats.todayRevenue)}</p><p className="text-xs text-foreground-secondary">Gross amount marked paid today; not net earnings or payout.</p></Card>
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">

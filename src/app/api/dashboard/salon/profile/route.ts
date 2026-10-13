@@ -2,16 +2,34 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getCurrentUser } from '@/lib/auth';
 import { USER_ROLES, type UserRole } from '@/constants/roles';
-import Salon from '@/models/Salon';
+import Salon, { type ISalon } from '@/models/Salon';
 import { updateSalon } from '@/services/salon.service';
-import { SalonUpdateSchema } from '@/validations/salon.schema';
+import { SalonOwnerUpdateSchema, SalonUpdateSchema } from '@/validations/salon.schema';
 
-const SalonProfilePatchSchema = SalonUpdateSchema;
 const salonDashboardRoles: UserRole[] = [
   USER_ROLES.SALON_OWNER,
   USER_ROLES.ADMIN,
   USER_ROLES.SUPER_ADMIN,
 ];
+
+function serializeSalonProfile(salon: ISalon) {
+  return {
+    _id: salon._id.toString(),
+    name: salon.name,
+    description: salon.description || '',
+    logo: salon.logo || '',
+    coverImage: salon.coverImage || '',
+    images: salon.images || [],
+    address: salon.address,
+    location: salon.location,
+    contact: salon.contact,
+    openingHours: salon.openingHours,
+    facilities: salon.facilities || [],
+    isActive: salon.isActive,
+    isVerified: salon.isVerified,
+    approvalStatus: salon.approvalStatus || null,
+  };
+}
 
 export async function GET() {
   try {
@@ -31,7 +49,9 @@ export async function GET() {
       );
     }
 
-    const salon = await Salon.findOne({ owner: currentUser._id }).lean();
+    const salon = await Salon.findOne({ owner: currentUser._id }).select(
+      'name description logo coverImage images address location contact openingHours facilities isActive isVerified approvalStatus'
+    );
     if (!salon) {
       return NextResponse.json(
         { success: false, error: { code: 'SALON_NOT_FOUND', message: 'Salon not found for this user' } },
@@ -39,7 +59,7 @@ export async function GET() {
       );
     }
 
-    return NextResponse.json({ success: true, data: salon }, { status: 200 });
+    return NextResponse.json({ success: true, data: serializeSalonProfile(salon) }, { status: 200 });
   } catch (error) {
     console.error('Salon profile fetch error:', error);
     return NextResponse.json(
@@ -68,7 +88,9 @@ export async function PATCH(request: NextRequest) {
     }
 
     const body = await request.json();
-    const validated = SalonProfilePatchSchema.parse(body);
+    const validated = currentUser.role === USER_ROLES.SALON_OWNER
+      ? SalonOwnerUpdateSchema.parse(body)
+      : SalonUpdateSchema.parse(body);
 
     const salon = await Salon.findOne({ owner: currentUser._id });
     if (!salon) {
@@ -79,7 +101,11 @@ export async function PATCH(request: NextRequest) {
     }
 
     const updatedSalon = await updateSalon(salon._id.toString(), validated, currentUser);
-    return NextResponse.json({ success: true, data: updatedSalon, message: 'Salon updated successfully' }, { status: 200 });
+    return NextResponse.json({
+      success: true,
+      data: serializeSalonProfile(updatedSalon),
+      message: 'Salon updated successfully',
+    }, { status: 200 });
   } catch (error) {
     console.error('Salon profile update error:', error);
 

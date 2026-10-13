@@ -1,5 +1,11 @@
 # PHASE 13 COMPLETION REPORT — NOTIFICATION SYSTEM
 
+## Feature 13 Follow-up Audit
+
+The earlier completion notes below describe the original implementation, not verified delivery guarantees. Booking lifecycle notices are persisted as in-app records only. No reminder scheduler or queue is configured; the reminder service is callable groundwork, not an active delivery process. Web Push code exists and requires VAPID configuration, but is not wired into booking events; the supplied environment template alone does not verify deployed credentials. Twilio usage found in this repository is for OTP, not booking messages.
+
+The follow-up adds server-side event deduplication, reminder eligibility checks, customer in-app preference enforcement, and a reschedule event hook. It does not send real messages or claim delivery by an external provider.
+
 ## Overview
 Phase 13 completed the implementation of a centralized, event-driven notification system for BookMyNai. The system captures and tracks notifications for all user roles (Customer, Barber, Salon Owner, Admin) across the booking and payment lifecycle.
 

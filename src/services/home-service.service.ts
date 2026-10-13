@@ -13,7 +13,11 @@ import { generateBookingNumber } from '@/services/booking.service';
 import { generateOtp, hashOtp, verifyOtpHash } from '@/services/auth.service';
 import { sendOtp } from '@/lib/otp-provider';
 import { recordAuditEvent } from '@/services/audit.service';
-import { notifyBookingCreated } from '@/services/notification.service';
+import {
+  notifyBookingCancelled,
+  notifyBookingCompleted,
+  notifyBookingCreated,
+} from '@/services/notification.service';
 
 const REQUEST_TIMEOUT_MINUTES = Number(process.env.HOME_SERVICE_REQUEST_TIMEOUT_MINUTES ?? 15);
 const OTP_EXPIRY_MINUTES = 10;
@@ -157,6 +161,9 @@ export async function transitionHomeService(actor: AuthUser, id: string, next: H
   const timestampField: Record<string, string> = { ACCEPTED: 'acceptedAt', ON_THE_WAY: 'onTheWayAt', ARRIVED: 'arrivedAt' };
   const updated = await Booking.findOneAndUpdate({ _id: id, homeServiceStatus: booking.homeServiceStatus }, { $set: { homeServiceStatus: next, ...([HomeServiceStatus.CANCELLED, HomeServiceStatus.REJECTED].includes(next) ? { status: BOOKING_STATUS.CANCELLED } : {}), ...(timestampField[next] && timestamp[next] ? { [timestampField[next]]: timestamp[next] } : {}) } }, { new: true });
   if (!updated) throw HOME_SERVICE_ERRORS.INVALID_TRANSITION;
+  if (next === HomeServiceStatus.CANCELLED || next === HomeServiceStatus.REJECTED) {
+    await notifyBookingCancelled(id);
+  }
   await recordAuditEvent({ actor, action: `HOME_SERVICE_${next}`, entityType: 'Booking', entityId: id });
   return updated;
 }
@@ -172,6 +179,7 @@ export async function completeHomeService(actor: AuthUser, id: string) {
     { new: true },
   );
   if (!updated) throw HOME_SERVICE_ERRORS.INVALID_TRANSITION;
+  await notifyBookingCompleted(id);
   await recordAuditEvent({ actor, action: 'HOME_SERVICE_COMPLETED', entityType: 'Booking', entityId: id });
   return updated;
 }

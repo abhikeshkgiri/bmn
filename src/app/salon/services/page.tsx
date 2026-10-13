@@ -9,7 +9,8 @@ import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Loading';
 import { formatCurrency } from '@/utils/currency';
 import { SERVICE_CATEGORY } from '@/constants/services';
-import { Trash2, Eye, EyeOff, Plus } from 'lucide-react';
+import { USER_ROLES } from '@/constants/roles';
+import { Eye, EyeOff, Pencil, Plus } from 'lucide-react';
 
 interface Service {
   _id: string;
@@ -21,6 +22,7 @@ interface Service {
   discountPrice?: number;
   isActive: boolean;
   createdAt: string;
+  image?: string;
 }
 
 interface Salon {
@@ -46,9 +48,18 @@ export default function SalonServicesPage() {
   const [selectedSalonId, setSelectedSalonId] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [servicesError, setServicesError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [busyServiceId, setBusyServiceId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [serviceReloadKey, setServiceReloadKey] = useState(0);
+  const [ownerReloadKey, setOwnerReloadKey] = useState(0);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -62,9 +73,24 @@ export default function SalonServicesPage() {
 
   // Load only the authenticated owner's salon; public discovery omits pending salons.
   useEffect(() => {
+    const controller = new AbortController();
     const fetchOwnerSalon = async () => {
+      let salonFound = false;
       try {
-        const response = await fetch('/api/dashboard/salon/profile');
+        setLoading(true);
+        setLoadError('');
+        const authResponse = await fetch('/api/auth/me', { signal: controller.signal });
+        if (!authResponse.ok) {
+          router.replace('/login?next=%2Fsalon%2Fservices');
+          return;
+        }
+        const authResult = await authResponse.json();
+        if (authResult?.user?.role !== USER_ROLES.SALON_OWNER) {
+          setLoadError('Only salon owners can manage services.');
+          return;
+        }
+
+        const response = await fetch('/api/dashboard/salon/profile', { signal: controller.signal });
         const result = await response.json();
 
         if (response.status === 404 && result?.error?.code === 'SALON_NOT_FOUND') {
@@ -74,76 +100,113 @@ export default function SalonServicesPage() {
         if (!response.ok || !result.success) throw new Error(result?.error?.message || 'Failed to load your salon.');
         setSalons([result.data]);
         setSelectedSalonId(result.data._id);
+        salonFound = true;
       } catch (error) {
+        if (controller.signal.aborted) return;
         setLoadError(error instanceof Error ? error.message : 'Failed to load your salon.');
-        setLoading(false);
+      } finally {
+        if (!controller.signal.aborted && !salonFound) setLoading(false);
       }
     };
 
     void fetchOwnerSalon();
-  }, [router]);
+    return () => controller.abort();
+  }, [ownerReloadKey, router]);
 
   // Fetch services for selected salon
   useEffect(() => {
     if (!selectedSalonId) return;
 
+    const controller = new AbortController();
     const fetchServices = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`/api/services?salonId=${selectedSalonId}&limit=100`);
+        setServicesError('');
+        const response = await fetch(
+          `/api/services?salonId=${encodeURIComponent(selectedSalonId)}&limit=50&page=${page}`,
+          { signal: controller.signal }
+        );
         const result = await response.json();
 
-        if (result.success) {
-          setServices(result.data);
+        if (!response.ok || !result.success) {
+          throw new Error(result?.error?.message || 'Failed to load services.');
         }
-      } catch {
-        console.error('Failed to fetch services');
+        setServices(result.data);
+        setTotalPages(result.pagination?.totalPages || 1);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setServicesError(error instanceof Error ? error.message : 'Failed to load services.');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
 
-    fetchServices();
-  }, [selectedSalonId]);
+    void fetchServices();
+    return () => controller.abort();
+  }, [page, selectedSalonId, serviceReloadKey]);
 
-  const handleCreateService = async (e: React.FormEvent) => {
+  const handleSubmitService = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving || !selectedSalonId) return;
+    setSaving(true);
+    setFormError('');
+    setNotice('');
 
     try {
       const payload = {
-        salonId: selectedSalonId,
+        ...(!editingId && { salonId: selectedSalonId }),
         name: formData.name,
         description: formData.description,
         category: formData.category,
-        duration: parseInt(formData.duration),
-        price: Math.round(parseFloat(formData.price) * 100), // Convert INR to paise
+        duration: Number(formData.duration),
+        price: Math.round(Number(formData.price) * 100),
         discountPrice: formData.discountPrice
-          ? Math.round(parseFloat(formData.discountPrice) * 100)
-          : undefined,
-        image: formData.image,
+          ? Math.round(Number(formData.discountPrice) * 100)
+          : editingId ? null : undefined,
+        image: formData.image.trim(),
       };
 
-      const response = await fetch('/api/services', {
-        method: 'POST',
+      const response = await fetch(editingId ? `/api/services/${editingId}` : '/api/services', {
+        method: editingId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
       const result = await response.json();
 
-      if (result.success) {
-        setServices([result.data, ...services]);
-        resetForm();
-        setShowForm(false);
-      } else {
-        alert('Error creating service: ' + result.error?.message);
+      if (!response.ok || !result.success) {
+        const details = result?.error?.details
+          ?.map((issue: { path?: (string | number)[]; message?: string }) =>
+            `${issue.path?.join('.') || 'Service'}: ${issue.message || 'Invalid value'}`
+          )
+          .join('; ');
+        throw new Error(details || result?.error?.message || 'Failed to save service.');
       }
+
+      if (editingId) {
+        setServices((current) => current.map((service) =>
+          service._id === editingId ? result.data : service
+        ));
+        setNotice('Service updated successfully.');
+      } else {
+        setPage(1);
+        setServiceReloadKey((key) => key + 1);
+        setNotice('Service created successfully.');
+      }
+      resetForm();
+      setShowForm(false);
     } catch (error) {
-      alert('Failed to create service: ' + String(error));
+      setFormError(error instanceof Error ? error.message : 'Failed to save service.');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleToggleStatus = async (serviceId: string, currentStatus: boolean) => {
+    if (busyServiceId) return;
+    setBusyServiceId(serviceId);
+    setServicesError('');
+    setNotice('');
     try {
       const response = await fetch(`/api/services/${serviceId}/status`, {
         method: 'PATCH',
@@ -153,31 +216,17 @@ export default function SalonServicesPage() {
 
       const result = await response.json();
 
-      if (result.success) {
-        setServices(
-          services.map((s) => (s._id === serviceId ? { ...s, isActive: !currentStatus } : s))
-        );
+      if (!response.ok || !result.success) {
+        throw new Error(result?.error?.message || 'Failed to update service status.');
       }
+      setServices((current) => current.map((service) =>
+        service._id === serviceId ? result.data : service
+      ));
+      setNotice(`Service ${currentStatus ? 'deactivated' : 'activated'} successfully.`);
     } catch (error) {
-      alert('Failed to update service status: ' + String(error));
-    }
-  };
-
-  const handleDeleteService = async (serviceId: string) => {
-    if (!confirm('Are you sure you want to deactivate this service?')) return;
-
-    try {
-      const response = await fetch(`/api/services/${serviceId}`, {
-        method: 'DELETE',
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        setServices(services.filter((s) => s._id !== serviceId));
-      }
-    } catch (error) {
-      alert('Failed to delete service: ' + String(error));
+      setServicesError(error instanceof Error ? error.message : 'Failed to update service status.');
+    } finally {
+      setBusyServiceId(null);
     }
   };
 
@@ -200,26 +249,30 @@ export default function SalonServicesPage() {
       service.description?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  if (salons.length === 0 && !loading) {
-    return (
-      <div className="min-h-screen bg-white">
-        <div className="max-w-4xl mx-auto px-4 py-12">
-          <Card className="p-8 text-center">
-            <h1 className="text-2xl font-bold text-foreground mb-2">No Salons Found</h1>
-            <p className="text-foreground-secondary mb-6">
-              You need to create a salon first to manage services.
-            </p>
-            <Button variant="primary" onClick={() => router.push('/salons')}>
-              View Salons
-            </Button>
-          </Card>
-        </div>
-      </div>
-    );
+  const startEditing = (service: Service) => {
+    setEditingId(service._id);
+    setFormData({
+      name: service.name,
+      description: service.description || '',
+      category: service.category,
+      duration: String(service.duration),
+      price: (service.price / 100).toFixed(2),
+      discountPrice: service.discountPrice == null ? '' : (service.discountPrice / 100).toFixed(2),
+      image: service.image || '',
+    });
+    setFormError('');
+    setNotice('');
+    setShowForm(true);
+  };
+
+  if (loading && salons.length === 0) {
+    return <div className="min-h-screen flex items-center justify-center bg-white"><Spinner size="lg" /></div>;
   }
 
   if (loadError) {
-    return <div className="min-h-screen bg-white px-4 py-12"><Card className="mx-auto max-w-2xl p-8 text-center"><h1 className="text-2xl font-bold">Unable to load salon services</h1><p className="mt-3 text-foreground-secondary">{loadError}</p><Button className="mt-5" variant="outline" onClick={() => router.push('/salon/onboarding')}>Salon onboarding</Button></Card></div>;
+    return (
+      <div className="min-h-screen bg-white px-4 py-12"><Card className="mx-auto max-w-2xl p-8 text-center" role="alert"><h1 className="text-2xl font-bold">Unable to load salon services</h1><p className="mt-3 text-foreground-secondary">{loadError}</p><Button className="mt-5" variant="outline" onClick={() => setOwnerReloadKey((key) => key + 1)}>Try again</Button></Card></div>
+    );
   }
 
   return (
@@ -231,27 +284,20 @@ export default function SalonServicesPage() {
           <p className="text-foreground-secondary">Create and manage your salon services</p>
         </div>
 
-        {/* Salon Selector */}
-        {salons.length > 0 && (
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-foreground mb-2">Select Salon</label>
-            <select
-              value={selectedSalonId}
-              onChange={(e) => setSelectedSalonId(e.target.value)}
-              className="w-full px-4 py-2 border border-border rounded-lg bg-white text-foreground font-medium"
-            >
-              {salons.map((salon) => (
-                <option key={salon._id} value={salon._id}>
-                  {salon.name}
-                </option>
-              ))}
-            </select>
-          </div>
+        {salons[0] && <p className="mb-6 text-sm text-foreground-secondary">Managing services for <span className="font-medium text-foreground">{salons[0].name}</span></p>}
+
+        {notice && <Card className="mb-4 p-4 text-green-800" role="status">{notice}</Card>}
+        {servicesError && (
+          <Card className="mb-4 p-4" role="alert">
+            <p className="mb-3 text-red-600">{servicesError}</p>
+            <Button variant="outline" onClick={() => setServiceReloadKey((key) => key + 1)}>Try again</Button>
+          </Card>
         )}
 
         {/* Search & Create */}
         <div className="mb-6 flex flex-col md:flex-row gap-4">
           <Input
+            aria-label="Search salon services"
             placeholder="Search services..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -259,8 +305,11 @@ export default function SalonServicesPage() {
           />
           <Button
             variant="primary"
+            disabled={saving}
             onClick={() => {
               resetForm();
+              setFormError('');
+              setNotice('');
               setShowForm(true);
             }}
             className="flex items-center gap-2"
@@ -277,13 +326,17 @@ export default function SalonServicesPage() {
               {editingId ? 'Edit Service' : 'Create New Service'}
             </h2>
 
-            <form onSubmit={handleCreateService} className="space-y-4">
+            {formError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{formError}</p>}
+            <form onSubmit={handleSubmitService} className="space-y-4">
+              <fieldset disabled={saving} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-1">
                     Service Name *
                   </label>
                   <Input
+                    minLength={2}
+                    maxLength={100}
                     required
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
@@ -317,8 +370,9 @@ export default function SalonServicesPage() {
                   <Input
                     required
                     type="number"
-                    min="5"
+                    min="15"
                     max="480"
+                    step="1"
                     value={formData.duration}
                     onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
                   />
@@ -352,6 +406,15 @@ export default function SalonServicesPage() {
                     placeholder="Optional"
                   />
                 </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-foreground mb-1">Image URL</label>
+                  <Input
+                    type="url"
+                    placeholder="https://"
+                    value={formData.image}
+                    onChange={(e) => setFormData({ ...formData, image: e.target.value })}
+                  />
+                </div>
               </div>
 
               <div>
@@ -364,14 +427,16 @@ export default function SalonServicesPage() {
                   placeholder="Service description"
                   className="w-full px-4 py-2 border border-border rounded-lg bg-white text-foreground"
                   rows={3}
+                  maxLength={2000}
                 />
               </div>
+              </fieldset>
 
               <div className="flex gap-2">
-                <Button variant="primary" type="submit">
+                <Button variant="primary" type="submit" isLoading={saving}>
                   {editingId ? 'Update Service' : 'Create Service'}
                 </Button>
-                <Button variant="ghost" type="button" onClick={() => setShowForm(false)}>
+                <Button variant="ghost" type="button" disabled={saving} onClick={() => { setShowForm(false); resetForm(); setFormError(''); }}>
                   Cancel
                 </Button>
               </div>
@@ -401,7 +466,7 @@ export default function SalonServicesPage() {
                     <div className="flex gap-4 mt-2 text-sm text-foreground-secondary">
                       <span>{service.duration} min</span>
                       <span className="font-medium">
-                        {service.discountPrice ? (
+                        {service.discountPrice != null ? (
                           <>
                             <span className="line-through">{formatCurrency(service.price)}</span>
                             <span className="ml-2 text-brand-pink">
@@ -419,6 +484,17 @@ export default function SalonServicesPage() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      disabled={Boolean(busyServiceId) || saving}
+                      onClick={() => startEditing(service)}
+                      className="flex items-center gap-1"
+                    >
+                      <Pencil size={16} />
+                      Edit
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={Boolean(busyServiceId) || saving}
                       onClick={() => handleToggleStatus(service._id, service.isActive)}
                       className="flex items-center gap-1"
                     >
@@ -434,32 +510,32 @@ export default function SalonServicesPage() {
                         </>
                       )}
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDeleteService(service._id)}
-                      className="text-red-600 hover:text-red-700"
-                    >
-                      <Trash2 size={16} />
-                    </Button>
                   </div>
                 </div>
               </Card>
             ))}
           </div>
-        ) : (
+        ) : servicesError ? null : (
           <Card className="p-8 text-center">
-            <p className="text-foreground-secondary mb-4">No services yet</p>
-            <Button
+            <p className="text-foreground-secondary mb-4">{searchTerm ? 'No services match your search on this page.' : 'No services yet.'}</p>
+            {!searchTerm && <Button
               variant="primary"
               onClick={() => {
                 resetForm();
+                setFormError('');
                 setShowForm(true);
               }}
             >
               Create Your First Service
-            </Button>
+            </Button>}
           </Card>
+        )}
+        {!loading && totalPages > 1 && (
+          <nav className="mt-6 flex items-center justify-center gap-4" aria-label="Service list pages">
+            <Button variant="outline" disabled={page <= 1} onClick={() => setPage((current) => current - 1)}>Previous</Button>
+            <span className="text-sm text-foreground-secondary">Page {page} of {totalPages}</span>
+            <Button variant="outline" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)}>Next</Button>
+          </nav>
         )}
       </div>
     </div>

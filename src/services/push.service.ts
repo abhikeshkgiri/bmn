@@ -5,6 +5,7 @@
 
 import { Types } from 'mongoose';
 import PushSubscription from '@/models/PushSubscription';
+import User from '@/models/User';
 import { connectDB } from '@/lib/db';
 import webpush from 'web-push';
 
@@ -121,9 +122,7 @@ export async function isUserSubscribedToPush(userId: string): Promise<boolean> {
 }
 
 /**
- * Send push notification to all user's subscriptions
- * Note: Full web push implementation would require web-push library
- * This is a placeholder for the API structure
+ * Send push notification to all user's subscriptions when VAPID is configured.
  */
 export async function sendPushNotificationToUser(
   userId: string,
@@ -143,6 +142,8 @@ export async function sendPushNotificationToUser(
   if (!publicKey || !privateKey || !subject) {
     return 0;
   }
+  const user = await User.findById(userId).select('notificationPreferences.push');
+  if (user?.notificationPreferences?.push === false) return 0;
 
   webpush.setVapidDetails(subject, publicKey, privateKey);
   let sent = 0;
@@ -161,6 +162,9 @@ export async function sendPushNotificationToUser(
       const statusCode = error && typeof error === 'object' && 'statusCode' in error ? error.statusCode : undefined;
       if (statusCode === 404 || statusCode === 410) {
         await removeInvalidPushSubscription(sub.endpoint);
+      } else {
+        const errorName = error instanceof Error ? error.name : 'UnknownError';
+        console.error('Push notification delivery failed', { statusCode, errorName });
       }
     }
   }

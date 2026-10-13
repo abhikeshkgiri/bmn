@@ -1,15 +1,16 @@
 import { z } from 'zod';
+import { SALON_FACILITY } from '@/constants/services';
 
 export const AddressSchema = z.object({
-  addressLine1: z.string().min(1),
-  addressLine2: z.string().optional(),
-  area: z.string().optional(),
-  landmark: z.string().optional(),
-  city: z.string().min(1),
-  state: z.string().min(1),
-  postalCode: z.string().min(1),
-  country: z.string().min(1).default('India'),
-});
+  addressLine1: z.string().trim().min(2).max(200),
+  addressLine2: z.string().trim().max(200).optional(),
+  area: z.string().trim().max(100).optional(),
+  landmark: z.string().trim().max(100).optional(),
+  city: z.string().trim().min(2).max(80),
+  state: z.string().trim().min(2).max(80),
+  postalCode: z.string().trim().min(3).max(12),
+  country: z.string().trim().min(2).max(80).default('India'),
+}).strict();
 
 export const LocationSchema = z.object({
   type: z.literal('Point'),
@@ -17,79 +18,93 @@ export const LocationSchema = z.object({
     z.number().min(-180).max(180),
     z.number().min(-90).max(90),
   ]),
+}).strict();
+
+const OpeningDaySchema = z.object({
+  isOpen: z.boolean(),
+  openTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  closeTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+}).strict().superRefine((hours, context) => {
+  if (!hours.isOpen) return;
+  if (!hours.openTime || !hours.closeTime) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Opening and closing times are required when the salon is open',
+    });
+    return;
+  }
+  if (hours.closeTime <= hours.openTime) {
+    context.addIssue({
+      code: 'custom',
+      path: ['closeTime'],
+      message: 'Closing time must be later than opening time',
+    });
+  }
 });
 
 export const OpeningHoursSchema = z.object({
-  monday: z.object({
-    isOpen: z.boolean(),
-    openTime: z.string().optional(),
-    closeTime: z.string().optional(),
-  }),
-  tuesday: z.object({
-    isOpen: z.boolean(),
-    openTime: z.string().optional(),
-    closeTime: z.string().optional(),
-  }),
-  wednesday: z.object({
-    isOpen: z.boolean(),
-    openTime: z.string().optional(),
-    closeTime: z.string().optional(),
-  }),
-  thursday: z.object({
-    isOpen: z.boolean(),
-    openTime: z.string().optional(),
-    closeTime: z.string().optional(),
-  }),
-  friday: z.object({
-    isOpen: z.boolean(),
-    openTime: z.string().optional(),
-    closeTime: z.string().optional(),
-  }),
-  saturday: z.object({
-    isOpen: z.boolean(),
-    openTime: z.string().optional(),
-    closeTime: z.string().optional(),
-  }),
-  sunday: z.object({
-    isOpen: z.boolean(),
-    openTime: z.string().optional(),
-    closeTime: z.string().optional(),
-  }),
-});
+  monday: OpeningDaySchema,
+  tuesday: OpeningDaySchema,
+  wednesday: OpeningDaySchema,
+  thursday: OpeningDaySchema,
+  friday: OpeningDaySchema,
+  saturday: OpeningDaySchema,
+  sunday: OpeningDaySchema,
+}).strict();
+
+const HttpUrlSchema = z.string().trim().max(2048).refine((value) => {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}, 'URL must use HTTP or HTTPS');
+
+const OptionalHttpUrlSchema = z.union([HttpUrlSchema, z.literal('')])
+  .optional()
+  .transform((value) => value || undefined);
 
 export const ContactSchema = z.object({
-  phone: z.string().regex(/^\+?[1-9]\d{1,14}$/),
-  email: z.string().email().optional(),
-  website: z.string().optional(),
-});
+  phone: z.string().trim().regex(/^\+?[1-9]\d{9,14}$/),
+  email: z.union([z.string().trim().toLowerCase().email().max(160), z.literal('')])
+    .optional()
+    .transform((value) => value || undefined),
+  website: OptionalHttpUrlSchema,
+}).strict();
 
 export const SalonCreateSchema = z.object({
-  name: z.string().min(3).max(100),
-  slug: z.string().regex(/^[a-z0-9-]+$/),
-  description: z.string().optional(),
-  logo: z.string().optional(),
-  coverImage: z.string().optional(),
+  name: z.string().trim().min(3).max(100),
+  slug: z.string().trim().regex(/^[a-z0-9-]+$/),
+  description: z.string().trim().max(1000).optional(),
+  logo: OptionalHttpUrlSchema,
+  coverImage: OptionalHttpUrlSchema,
+  images: z.array(HttpUrlSchema).max(20).optional(),
   address: AddressSchema,
   location: LocationSchema,
   contact: ContactSchema,
   openingHours: OpeningHoursSchema,
-  facilities: z.array(z.string()).optional(),
-});
+  facilities: z.array(z.enum(SALON_FACILITY)).max(30).optional(),
+}).strict();
 
 export const SalonUpdateSchema = z.object({
-  name: z.string().min(3).max(100).optional(),
-  description: z.string().optional(),
-  logo: z.string().optional(),
-  coverImage: z.string().optional(),
+  name: z.string().trim().min(3).max(100).optional(),
+  description: z.string().trim().max(1000).optional(),
+  logo: OptionalHttpUrlSchema,
+  coverImage: OptionalHttpUrlSchema,
+  images: z.array(HttpUrlSchema).max(20).optional(),
   address: AddressSchema.partial().optional(),
   location: LocationSchema.optional(),
   contact: ContactSchema.partial().optional(),
   openingHours: OpeningHoursSchema.partial().optional(),
-  facilities: z.array(z.string()).optional(),
+  facilities: z.array(z.enum(SALON_FACILITY)).max(30).optional(),
   isActive: z.boolean().optional(),
-});
+}).strict();
+
+export const SalonOwnerUpdateSchema = SalonUpdateSchema.omit({ isActive: true });
 
 export type SalonCreateInput = z.infer<typeof SalonCreateSchema>;
 export type SalonUpdateInput = z.infer<typeof SalonUpdateSchema>;
+export type SalonOwnerUpdateInput = z.infer<typeof SalonOwnerUpdateSchema>;
 export type AddressInput = z.infer<typeof AddressSchema>;
 export type LocationInput = z.infer<typeof LocationSchema>;

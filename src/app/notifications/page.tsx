@@ -20,11 +20,13 @@ export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const fetchInitialNotifications = async () => {
       try {
         setLoading(true);
+        setError('');
         const response = await fetch('/api/notifications?page=1&limit=10');
         const result = await response.json() as {
           success?: boolean;
@@ -43,7 +45,7 @@ export default function NotificationsPage() {
         setTotalPages(result.data?.pagination?.totalPages ?? 1);
         setPage(result.data?.pagination?.page ?? 1);
       } catch {
-        setNotifications([]);
+        setError('Unable to load notifications. Please try again.');
       } finally {
         setLoading(false);
       }
@@ -59,6 +61,7 @@ export default function NotificationsPage() {
   const loadNotifications = async (pageNumber = 1) => {
     try {
       setLoading(true);
+      setError('');
       const response = await fetch(`/api/notifications?page=${pageNumber}&limit=10`);
       const result = await response.json() as {
         success?: boolean;
@@ -77,30 +80,39 @@ export default function NotificationsPage() {
       setTotalPages(result.data?.pagination?.totalPages ?? 1);
       setPage(result.data?.pagination?.page ?? pageNumber);
     } catch {
-      setNotifications([]);
+      setError('Unable to load notifications. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   const markAllRead = async () => {
-    const response = await fetch('/api/notifications/read-all', { method: 'POST' });
-    if (response.ok) {
-      void loadNotifications(page);
+    try {
+      const response = await fetch('/api/notifications/read-all', { method: 'POST' });
+      if (!response.ok) throw new Error('Unable to update notifications.');
+      await loadNotifications(page);
+    } catch {
+      setError('Unable to update notifications. Please try again.');
     }
   };
 
   const deleteNotification = async (id: string) => {
-    const response = await fetch(`/api/notifications/${id}`, { method: 'DELETE' });
-    if (response.ok) {
-      void loadNotifications(page);
+    try {
+      const response = await fetch(`/api/notifications/${id}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Unable to delete this notification.');
+      await loadNotifications(page);
+    } catch {
+      setError('Unable to delete this notification. Please try again.');
     }
   };
 
   const handleRead = async (id: string) => {
-    const response = await fetch(`/api/notifications/${id}/read`, { method: 'POST' });
-    if (response.ok) {
-      void loadNotifications(page);
+    try {
+      const response = await fetch(`/api/notifications/${id}/read`, { method: 'POST' });
+      if (!response.ok) throw new Error('Unable to update this notification.');
+      await loadNotifications(page);
+    } catch {
+      setError('Unable to update this notification. Please try again.');
     }
   };
 
@@ -131,7 +143,12 @@ export default function NotificationsPage() {
             <CardTitle>Your notifications</CardTitle>
           </CardHeader>
           <CardContent>
-            {notifications.length === 0 ? (
+            {error ? (
+              <div className="py-8 text-center" role="alert">
+                <p className="mb-3 text-sm text-error-600">{error}</p>
+                <Button variant="outline" size="sm" onClick={() => void loadNotifications(page)}>Try again</Button>
+              </div>
+            ) : notifications.length === 0 ? (
               <div className="py-8 text-center text-foreground-secondary">You do not have any notifications yet.</div>
             ) : (
               <div className="space-y-3">

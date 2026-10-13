@@ -7,12 +7,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import { verifySalon, unverifySalon } from '@/services/salon.service';
-import { z } from 'zod';
+import { SalonVerificationSchema } from '@/validations/admin-salon.schema';
 import { ZodError } from 'zod';
-
-const VerifySchema = z.object({
-  isVerified: z.boolean(),
-});
 
 export async function PATCH(
   request: NextRequest,
@@ -23,7 +19,7 @@ export async function PATCH(
     const { id } = await params;
 
     // Validate ID format
-    if (!id || id.length !== 24) {
+    if (!/^[a-f\d]{24}$/i.test(id)) {
       return NextResponse.json(
         {
           success: false,
@@ -37,7 +33,7 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const validatedData = VerifySchema.parse(body);
+    const validatedData = SalonVerificationSchema.parse(body);
 
     const salon = validatedData.isVerified
       ? await verifySalon(id, currentUser)
@@ -73,6 +69,13 @@ export async function PATCH(
         return NextResponse.json(
           { success: false, error: { code: 'CITY_NOT_SUPPORTED', message: message.split(':').slice(1).join(':').trim() } },
           { status: 422 }
+        );
+      }
+
+      if (message.startsWith('SALON_APPROVAL_CONFLICT:')) {
+        return NextResponse.json(
+          { success: false, error: { code: 'SALON_APPROVAL_CONFLICT', message: 'Salon status changed while it was being reviewed. Reload and try again.' } },
+          { status: 409 }
         );
       }
 

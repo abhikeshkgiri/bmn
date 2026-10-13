@@ -20,6 +20,24 @@ type SalonStatus = {
   address: { city: string; state: string };
 };
 
+function isSalonStatus(value: unknown): value is SalonStatus {
+  if (typeof value !== 'object' || value === null) return false;
+  const salon = value as Record<string, unknown>;
+  const address = salon.address;
+  return (
+    typeof salon._id === 'string' &&
+    typeof salon.name === 'string' &&
+    typeof salon.isActive === 'boolean' &&
+    typeof salon.isVerified === 'boolean' &&
+    typeof address === 'object' &&
+    address !== null &&
+    'city' in address &&
+    typeof address.city === 'string' &&
+    'state' in address &&
+    typeof address.state === 'string'
+  );
+}
+
 const openingHours = {
   monday: { isOpen: true, openTime: '09:00', closeTime: '20:00' },
   tuesday: { isOpen: true, openTime: '09:00', closeTime: '20:00' },
@@ -71,7 +89,7 @@ export default function SalonOnboardingPage() {
         throw new Error(result?.error?.message || 'Failed to load salon onboarding.');
       }
 
-      const existingSalon = result.data?.salon as SalonStatus | null;
+      const existingSalon = isSalonStatus(result.data?.salon) ? result.data.salon : null;
       setSalon(existingSalon);
       if (
         existingSalon?.isActive &&
@@ -125,11 +143,24 @@ export default function SalonOnboardingPage() {
           facilities: [],
         }),
       });
-      const result = await response.json();
+      const result = await response.json() as {
+        success?: boolean;
+        data?: unknown;
+        error?: {
+          message?: string;
+          details?: Array<{ path?: Array<string | number>; message?: string }>;
+        };
+      };
       if (!response.ok || !result.success) {
-        throw new Error(result?.error?.message || 'Failed to submit salon.');
+        const validationMessages = result.error?.details
+          ?.map((issue) => issue.path?.length
+            ? `${issue.path.join('.')}: ${issue.message || 'Invalid value'}`
+            : issue.message)
+          .filter((message): message is string => Boolean(message));
+        throw new Error(validationMessages?.join('. ') || result.error?.message || 'Failed to submit salon.');
       }
-      await loadOnboarding();
+      if (!isSalonStatus(result.data)) throw new Error('Salon was submitted, but its status could not be confirmed. Refresh the page to check.');
+      setSalon(result.data);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Failed to submit salon.');
     } finally {
@@ -158,7 +189,15 @@ export default function SalonOnboardingPage() {
             <CardContent className="space-y-4">
               <p>
                 Status:{' '}
-                <strong>{approvalStatus === 'APPROVED' && salon.isActive && salon.isVerified ? 'Approved and published' : approvalStatus === 'REJECTED' ? 'Rejected' : 'Pending admin review'}</strong>
+                <strong>
+                  {approvalStatus === 'REJECTED'
+                    ? 'Rejected'
+                    : approvalStatus === 'APPROVED'
+                      ? salon.isActive && salon.isVerified
+                        ? 'Approved and published'
+                        : 'Approved, but not currently published'
+                      : 'Pending admin review'}
+                </strong>
               </p>
               <p className="text-sm text-foreground-secondary">{salon.address.city}, {salon.address.state}</p>
               {approvalStatus === 'REJECTED' && (

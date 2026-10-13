@@ -19,6 +19,7 @@ interface INotification extends Document {
   bookingId?: Types.ObjectId;
   salonId?: Types.ObjectId;
   barberId?: Types.ObjectId;
+  eventKey?: string;
   priority?: NotificationPriority;
   channel?: NotificationChannel;
   metadata?: Record<string, unknown>;
@@ -76,6 +77,11 @@ const NotificationSchema = new Schema<INotification>(
       default: null,
       index: true,
     },
+    eventKey: {
+      type: String,
+      trim: true,
+      maxlength: 300,
+    },
     priority: {
       type: String,
       enum: Object.values(NOTIFICATION_PRIORITY),
@@ -107,6 +113,10 @@ const NotificationSchema = new Schema<INotification>(
 NotificationSchema.index({ recipientId: 1, createdAt: -1 });
 NotificationSchema.index({ recipientId: 1, isRead: 1 });
 NotificationSchema.index({ recipientId: 1, type: 1 });
+NotificationSchema.index(
+  { recipientId: 1, eventKey: 1 },
+  { unique: true, partialFilterExpression: { eventKey: { $type: 'string' } } },
+);
 
 const Notification = mongoose.models.Notification || mongoose.model<INotification>('Notification', NotificationSchema);
 

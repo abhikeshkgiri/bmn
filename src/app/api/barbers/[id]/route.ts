@@ -24,7 +24,7 @@ export async function GET(
     const { id } = await params;
 
     // Validate ID format
-    if (!id || id.length !== 24) {
+    if (!/^[a-f\d]{24}$/i.test(id)) {
       return NextResponse.json(
         {
           success: false,
@@ -125,7 +125,7 @@ export async function PATCH(
     const { id } = await params;
 
     // Validate ID format
-    if (!id || id.length !== 24) {
+    if (!/^[a-f\d]{24}$/i.test(id)) {
       return NextResponse.json(
         {
           success: false,
@@ -239,7 +239,7 @@ export async function DELETE(
     const { id } = await params;
 
     // Validate ID format
-    if (!id || id.length !== 24) {
+    if (!/^[a-f\d]{24}$/i.test(id)) {
       return NextResponse.json(
         {
           success: false,

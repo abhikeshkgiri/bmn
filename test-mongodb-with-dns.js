@@ -4,6 +4,8 @@
  * Uses Google DNS (8.8.8.8) to bypass local DNS issues
  */
 
+require('./scripts/test-db-bootstrap.cjs');
+
 const fs = require('fs');
 const path = require('path');
 const dns = require('dns');
@@ -50,7 +52,7 @@ mongoose
     // Get database info
     const adminDb = connection.connection.db.admin();
     try {
-      const ping = await adminDb.ping();
+      await adminDb.ping();
       console.log(`✅ Database ping successful`);
       console.log(`Database: ${connection.connection.db.databaseName}`);
       console.log('');

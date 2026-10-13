@@ -4,6 +4,8 @@
  * Tests if the cluster nodes are reachable without DNS SRV lookup
  */
 
+const { assertIsolatedTestDatabase } = require('./scripts/test-db-bootstrap.cjs');
+
 const fs = require('fs');
 const path = require('path');
 
@@ -44,7 +46,6 @@ const [, username, password, cluster, database] = match;
 
 console.log('🔍 MongoDB Direct Connection Test (No SRV)');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log(`Username: ${username}`);
 console.log(`Database: ${database}`);
 console.log(`Cluster: ${cluster}`);
 console.log('');
@@ -67,12 +68,13 @@ async function testDirectConnection() {
     process.stdout.write(`Testing ${shard}... `);
     
     try {
+      assertIsolatedTestDatabase({ ...process.env, MONGODB_URI: uri });
       const connection = await mongoose.connect(uri, {
         serverSelectionTimeoutMS: 5000,
         socketTimeoutMS: 5000
       });
       
-      const ping = await connection.connection.db.admin().ping();
+      await connection.connection.db.admin().ping();
       console.log('✅ OK');
       success = true;
       await connection.disconnect();

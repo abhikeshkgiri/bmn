@@ -42,6 +42,8 @@ import {
   notifyBookingCancelled,
   notifyBookingCreated,
   notifyBookingConfirmed,
+  notifyBookingCompleted,
+  notifyBookingRescheduled,
 } from '@/services/notification.service';
 import mongoose from 'mongoose';
 import { recordAuditEvent } from '@/services/audit.service';
@@ -1148,6 +1150,10 @@ export async function updateBookingStatus(
   }
 
   if (newStatus === BOOKING_STATUS.COMPLETED) {
+    await notifyBookingCompleted(populatedBooking._id.toString());
+  }
+
+  if (newStatus === BOOKING_STATUS.COMPLETED) {
     await awardLoyaltyPoints(bookingId, booking.customer.toString(), booking.totalAmount);
   }
 
@@ -1396,5 +1402,10 @@ export async function rescheduleBooking(
   });
 
   if (!transactionResult.booking) throw BOOKING_ERRORS.BOOKING_NOT_FOUND;
+  await notifyBookingRescheduled(
+    bookingId,
+    transactionResult.booking.appointmentDate,
+    transactionResult.booking.startTime,
+  );
   return transactionResult.booking.populate(['customer', 'salon', 'barber', 'service']);
 }

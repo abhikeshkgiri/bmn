@@ -4,9 +4,9 @@
  * Does not expose secrets
  */
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+require('./scripts/test-db-bootstrap.cjs');
+
 const fs = require('fs');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const path = require('path');
 
 // Manual .env.local loading
@@ -25,7 +25,6 @@ if (fs.existsSync(envPath)) {
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const mongoose = require('mongoose');
 
 const MONGODB_URI = process.env.MONGODB_URI;

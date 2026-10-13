@@ -18,6 +18,24 @@ const validAddress = {
 };
 
 assert.equal(CustomerProfileUpdateSchema.safeParse({ name: 'Test Customer' }).success, true);
+assert.equal(
+  CustomerProfileUpdateSchema.safeParse({
+    notificationPreferences: { inApp: false, push: true },
+  }).success,
+  true,
+);
+assert.equal(
+  CustomerProfileUpdateSchema.safeParse({
+    notificationPreferences: { inApp: false, push: 'yes' },
+  }).success,
+  false,
+);
+assert.equal(
+  CustomerProfileUpdateSchema.safeParse({
+    notificationPreferences: { inApp: false, push: true, marketing: true },
+  }).success,
+  false,
+);
 assert.equal(CustomerProfileUpdateSchema.safeParse({ avatar: 'https://example.com/photo.jpg' }).success, true);
 assert.equal(CustomerProfileUpdateSchema.safeParse({ avatar: 'javascript:alert(1)' }).success, false);
 assert.equal(CustomerProfileUpdateSchema.safeParse({ role: 'ADMIN' }).success, false);

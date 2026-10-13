@@ -25,6 +25,7 @@ import {
 import type { AuthUser } from '@/types';
 import { PAYMENT_STATUS, PAYMENT_METHOD, PAYMENT_PROVIDER, BOOKING_STATUS } from '@/constants/booking';
 import {
+  notifyBookingConfirmed,
   notifyPaymentSuccess,
 } from '@/services/notification.service';
 import { recordAuditEvent } from '@/services/audit.service';
@@ -286,6 +287,8 @@ export async function verifyRazorpayPayment(
     if (booking.paymentStatus !== PAYMENT_STATUS.PAID) {
       throw PAYMENT_ERRORS.PAYMENT_CAPTURED_BOOKING_UNCONFIRMED;
     }
+    await notifyBookingConfirmed(bookingId);
+    await notifyPaymentSuccess(bookingId);
     return payment;
   }
 
@@ -390,6 +393,7 @@ export async function verifyRazorpayPayment(
     throw PAYMENT_ERRORS.INVALID_PAYMENT;
   }
 
+  await notifyBookingConfirmed(bookingId);
   await notifyPaymentSuccess(bookingId);
   await recordAuditEvent({
     actor: currentUser,
@@ -729,6 +733,15 @@ export async function handleWebhookEvent(
             bookingId: payment.booking.toString(),
             eventId,
           });
+        }
+        const confirmedBooking = await Booking.exists({
+          _id: payment.booking,
+          status: BOOKING_STATUS.CONFIRMED,
+          paymentStatus: PAYMENT_STATUS.PAID,
+        });
+        if (confirmedBooking) {
+          await notifyBookingConfirmed(payment.booking.toString());
+          await notifyPaymentSuccess(payment.booking.toString());
         }
       }
       break;

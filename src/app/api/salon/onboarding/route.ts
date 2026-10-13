@@ -43,7 +43,18 @@ export async function POST(request: NextRequest) {
   try {
     const input = SalonCreateSchema.parse(await request.json());
     const salon = await createSalon(input, user);
-    return NextResponse.json({ success: true, data: salon }, { status: 201 });
+    return NextResponse.json({
+      success: true,
+      data: {
+        _id: salon._id.toString(),
+        name: salon.name,
+        isActive: salon.isActive,
+        isVerified: salon.isVerified,
+        approvalStatus: salon.approvalStatus,
+        rejectionReason: salon.rejectionReason,
+        address: { city: salon.address.city, state: salon.address.state },
+      },
+    }, { status: 201 });
   } catch (error) {
     if (error instanceof ZodError) {
       return NextResponse.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid salon details', details: error.issues } }, { status: 400 });

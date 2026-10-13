@@ -75,8 +75,14 @@ export async function getAdminDashboardStats() {
     pendingReviews,
     activeMemberships,
     couponUsage: couponUsage[0]?.used ?? 0,
-    recentBookings: await Booking.find().sort({ createdAt: -1 }).limit(5).populate('customer salon barber service'),
-    recentUsers: await User.find().sort({ createdAt: -1 }).limit(5),
+    recentBookings: await Booking.find()
+      .select('status customer salon service')
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate('customer', 'name')
+      .populate('salon', 'name')
+      .populate('service', 'name'),
+    recentUsers: await User.find().select('name role isActive').sort({ createdAt: -1 }).limit(5),
   };
 }
 
@@ -135,6 +141,8 @@ export async function listSalonsForAdmin(options: {
     query.isActive = true;
   } else if (options.status === 'rejected') {
     query.approvalStatus = 'REJECTED';
+  } else if (options.status === 'inactive') {
+    query.isActive = false;
   }
   if (options.city) query['address.city'] = { $regex: options.city, $options: 'i' };
   if (options.from || options.to) {
@@ -346,15 +354,37 @@ export async function updateSalonVerification(actor: AuthUser, salonId: string, 
   if (isVerified && !normalizeSupportedSalonLocation(salon.address.city, salon.address.state)) {
     throw new Error(`CITY_NOT_SUPPORTED: ${UNSUPPORTED_CITY_MESSAGE}`);
   }
-  salon.isVerified = isVerified;
-  salon.isActive = isVerified;
-  salon.approvalStatus = isVerified ? 'APPROVED' : 'REJECTED';
-  salon.rejectionReason = isVerified ? null : reason!.trim();
-  salon.approvalUpdatedAt = new Date();
-  salon.approvalUpdatedBy = new Types.ObjectId(actor._id);
-  await salon.save();
+  const approvalUpdatedAt = new Date();
+  const updatedSalon = await Salon.findOneAndUpdate(
+    {
+      _id: salon._id,
+      approvalStatus: salon.approvalStatus ?? null,
+      isVerified: salon.isVerified,
+      isActive: salon.isActive,
+      approvalUpdatedAt: salon.approvalUpdatedAt ?? null,
+    },
+    {
+      $set: {
+        isVerified,
+        isActive: isVerified,
+        approvalStatus: isVerified ? 'APPROVED' : 'REJECTED',
+        rejectionReason: isVerified ? null : reason!.trim(),
+        approvalUpdatedAt,
+        approvalUpdatedBy: new Types.ObjectId(actor._id),
+      },
+    },
+    { new: true, runValidators: true },
+  );
+  if (!updatedSalon) throw new AdminConflictError('Salon approval changed while it was being reviewed. Reload and try again.');
   await recordAuditEvent({ actor, action: isVerified ? 'SALON_APPROVED' : 'SALON_REJECTED', entityType: 'Salon', entityId: salonId, metadata: reason ? { reason } : undefined });
-  return salon;
+  return updatedSalon;
+}
+
+export class AdminConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AdminConflictError';
+  }
 }
 
 export async function updateBarberVerification(actor: AuthUser, barberId: string, isVerified: boolean, reason?: string) {

@@ -6,7 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPublicSalonDetails, updateSalon, softDeleteSalon } from '@/services/salon.service';
 import { requireAuth } from '@/lib/auth';
-import { SalonUpdateSchema } from '@/validations/salon.schema';
+import { USER_ROLES } from '@/constants/roles';
+import { SalonOwnerUpdateSchema, SalonUpdateSchema } from '@/validations/salon.schema';
 import { SalonDetailParamSchema } from '@/validations/salon-discovery.schema';
 import { ZodError } from 'zod';
 
@@ -91,7 +92,9 @@ export async function PATCH(
     const body = await request.json();
 
     // Validate request
-    const validatedData = SalonUpdateSchema.parse(body);
+    const validatedData = currentUser.role === USER_ROLES.SALON_OWNER
+      ? SalonOwnerUpdateSchema.parse(body)
+      : SalonUpdateSchema.parse(body);
 
     // Update salon
     const salon = await updateSalon(id, validatedData, currentUser);

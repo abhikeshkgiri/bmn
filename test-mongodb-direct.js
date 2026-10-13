@@ -5,6 +5,8 @@
  * No TypeScript or path aliases
  */
 
+require('./scripts/test-db-bootstrap.cjs');
+
 const fs = require('fs');
 const path = require('path');
 

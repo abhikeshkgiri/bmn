@@ -1,7 +1,14 @@
-import { connectDB } from './src/lib/db.ts';
-import Salon from './src/models/Salon.ts';
-import Barber from './src/models/Barber.ts';
-import Service from './src/models/Service.ts';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+require('./scripts/test-db-bootstrap.cjs');
+
+const [{ connectDB }, { default: Salon }, { default: Barber }, { default: Service }] = await Promise.all([
+  import('./src/lib/db.ts'),
+  import('./src/models/Salon.ts'),
+  import('./src/models/Barber.ts'),
+  import('./src/models/Service.ts'),
+]);
 
 const main = async () => {
   await connectDB();

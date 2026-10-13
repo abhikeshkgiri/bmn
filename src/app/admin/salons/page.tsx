@@ -43,7 +43,7 @@ interface AuditEntry {
 
 const statusLabel = (salon: AdminSalon) => {
   if (salon.approvalStatus) return salon.approvalStatus;
-  return salon.isVerified && salon.isActive ? 'APPROVED' : 'PENDING';
+  return salon.isVerified ? 'APPROVED' : 'PENDING';
 };
 
 export default function AdminSalonsPage() {
@@ -151,6 +151,7 @@ export default function AdminSalonsPage() {
                 <option value="pending">Pending review</option>
                 <option value="active">Approved / active</option>
                 <option value="rejected">Rejected</option>
+                <option value="inactive">Inactive</option>
                 <option value="">All</option>
               </select>
             </label>
@@ -185,6 +186,8 @@ export default function AdminSalonsPage() {
                     <Badge variant={statusLabel(salon) === 'APPROVED' ? 'success' : statusLabel(salon) === 'REJECTED' ? 'error' : 'warning'}>
                       {statusLabel(salon)}
                     </Badge>
+                    <Badge variant={salon.isVerified ? 'success' : 'warning'}>{salon.isVerified ? 'Verified' : 'Unverified'}</Badge>
+                    <Badge variant={salon.isActive ? 'success' : 'warning'}>{salon.isActive ? 'Active' : 'Inactive'}</Badge>
                     <Button type="button" variant="outline" size="sm" onClick={() => void openDetails(salon)}>Review details</Button>
                   </div>
                 </article>
@@ -203,7 +206,7 @@ export default function AdminSalonsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Review: {selected.name}</CardTitle>
-            <p className="text-sm text-neutral-600">Current state: {statusLabel(selected)} · Submitted {new Date(selected.createdAt).toLocaleString()}</p>
+            <p className="text-sm text-neutral-600">Approval: {statusLabel(selected)} · {selected.isVerified ? 'Verified' : 'Unverified'} · {selected.isActive ? 'Active' : 'Inactive'} · Submitted {new Date(selected.createdAt).toLocaleString()}</p>
           </CardHeader>
           <CardContent className="space-y-5">
             {(selected.coverImage || selected.logo) ? (

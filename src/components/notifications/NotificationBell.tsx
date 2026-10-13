@@ -18,6 +18,7 @@ export default function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<NotificationPreview[]>([]);
   const [loading, setLoading] = useState(false);
+  const [previewError, setPreviewError] = useState(false);
 
   const loadUnreadCount = async () => {
     try {
@@ -35,8 +36,10 @@ export default function NotificationBell() {
   const loadPreview = async () => {
     try {
       setLoading(true);
+      setPreviewError(false);
       const response = await fetch('/api/notifications?limit=5');
       if (!response.ok) {
+        setPreviewError(true);
         return;
       }
       const result = await response.json() as {
@@ -45,7 +48,7 @@ export default function NotificationBell() {
       };
       setNotifications(result.data?.notifications ?? []);
     } catch {
-      // Ignore preview load errors.
+      setPreviewError(true);
     } finally {
       setLoading(false);
     }
@@ -96,6 +99,8 @@ export default function NotificationBell() {
         </div>
         {loading ? (
           <div className="px-4 py-3 text-sm text-foreground-secondary">Loading...</div>
+        ) : previewError ? (
+          <div role="alert" className="px-4 py-3 text-sm text-error-600">Unable to load notifications.</div>
         ) : notifications.length === 0 ? (
           <div className="px-4 py-3 text-sm text-foreground-secondary">You&apos;re all caught up.</div>
         ) : (

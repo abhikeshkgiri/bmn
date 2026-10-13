@@ -23,6 +23,22 @@ export interface PaginationData {
   totalPages: number;
 }
 
+function filterInactiveServices(barber: IBarber): void {
+  const populatedServices = barber.get('services');
+  const services = (Array.isArray(populatedServices) ? populatedServices : []) as Array<{
+    isActive?: boolean;
+    toObject: () => Record<string, unknown>;
+  }>;
+  const visibleServices = services
+    .filter((service) => service && service.isActive)
+    .map((service) => {
+      const data = service.toObject();
+      delete data.isActive;
+      return data;
+    });
+  barber.set('services', visibleServices);
+}
+
 /**
  * Generate unique slug for barber within a salon
  */
@@ -129,6 +145,7 @@ export async function createBarber(
     const services = await Service.find({
       _id: { $in: input.services },
       salon: input.salonId,
+      isActive: true,
     });
 
     if (services.length !== input.services.length) {
@@ -180,7 +197,7 @@ export async function getBarberById(
 
   const barber = await Barber.findById(barberId)
     .populate('salon', 'name slug')
-    .populate('services', 'name slug description category duration price discountPrice image');
+    .populate('services', 'name slug description category duration price discountPrice image isActive');
 
   if (!barber) {
     return null;
@@ -203,6 +220,7 @@ export async function getBarberById(
       isActive: true,
     });
     if (!activeBarberAccount) return null;
+    if (!isAdmin && !isOwner && !isBarber) filterInactiveServices(barber);
     if (!isAdmin && !isOwner && !isBarber) barber.set('user', undefined);
     return barber;
   }
@@ -221,7 +239,7 @@ export async function getBarberBySlug(slug: string, currentUser?: AuthUser): Pro
 
   const barber = await Barber.findOne({ slug })
     .populate('salon', 'name slug')
-    .populate('services', 'name slug description category duration price discountPrice image');
+    .populate('services', 'name slug description category duration price discountPrice image isActive');
 
   if (!barber) {
     return null;
@@ -243,6 +261,7 @@ export async function getBarberBySlug(slug: string, currentUser?: AuthUser): Pro
       isActive: true,
     });
     if (!activeBarberAccount) return null;
+    if (!isAdmin && !isOwner && !isBarber) filterInactiveServices(barber);
     if (!isAdmin && !isOwner && !isBarber) barber.set('user', undefined);
     return barber;
   }
@@ -330,7 +349,7 @@ export async function listBarbers(
   }
 
   // Filter by active status
-  if (options.isActive && (isAdmin || isSalonOwner)) {
+  if (options.isActive !== undefined && (isAdmin || isSalonOwner)) {
     query.isActive = options.isActive === 'true';
   }
 
@@ -359,7 +378,7 @@ export async function listBarbers(
     ? await barberQuery
       .select('name slug profileImage bio experienceYears specializations services portfolio rating reviewCount isAvailable offersHomeService homeServiceRadius isVerified isActive salon')
       .populate('salon', 'name slug')
-      .populate('services', 'name slug duration price discountPrice category')
+      .populate({ path: 'services', select: 'name slug duration price discountPrice category', match: { isActive: true } })
     : await barberQuery.populate(['user', 'salon', 'services']);
 
   return {
@@ -428,6 +447,7 @@ export async function updateBarber(
     const services = await Service.find({
       _id: { $in: input.services },
       salon: barber.salon,
+      isActive: true,
     });
 
     if (services.length !== input.services.length) {
@@ -436,21 +456,18 @@ export async function updateBarber(
   }
 
   // Validate home service settings
-  if (input.offersHomeService === false) {
-    input.homeServiceRadius = undefined;
-  }
-
   // Update allowed fields
   const updateData: Record<string, unknown> = {};
-  if (input.name) updateData.name = input.name;
-  if (input.bio) updateData.bio = input.bio;
-  if (input.profileImage) updateData.profileImage = input.profileImage;
+  if (input.name !== undefined) updateData.name = input.name;
+  if (input.bio !== undefined) updateData.bio = input.bio || null;
+  if (input.profileImage !== undefined) updateData.profileImage = input.profileImage || null;
   if (input.experienceYears !== undefined) updateData.experienceYears = input.experienceYears;
   if (input.specializations) updateData.specializations = input.specializations;
   if (input.services) updateData.services = input.services;
   if (input.portfolio) updateData.portfolio = input.portfolio;
   if (input.offersHomeService !== undefined) updateData.offersHomeService = input.offersHomeService;
-  if (input.homeServiceRadius) updateData.homeServiceRadius = input.homeServiceRadius;
+  if (input.offersHomeService === false) updateData.homeServiceRadius = null;
+  else if (input.homeServiceRadius !== undefined) updateData.homeServiceRadius = input.homeServiceRadius;
   if (input.isAvailable !== undefined) updateData.isAvailable = input.isAvailable;
 
   // Regenerate slug if name changed

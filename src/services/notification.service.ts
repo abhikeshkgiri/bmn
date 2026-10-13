@@ -3,10 +3,17 @@ import Notification, { type INotification } from '@/models/Notification';
 import Booking from '@/models/Booking';
 import Salon from '@/models/Salon';
 import Barber from '@/models/Barber';
+import User from '@/models/User';
 import { connectDB } from '@/lib/db';
 import type { AuthUser } from '@/types';
 import { USER_ROLES } from '@/constants/roles';
 import { NOTIFICATION_PRIORITY, NOTIFICATION_TYPES, type NotificationType } from '@/constants/notifications';
+import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
+import {
+  getBookingNotificationEventKey,
+  isAppointmentReminderEligible,
+  type AppointmentReminderType,
+} from '@/utils/notification';
 
 export interface NotificationCreateInput {
   recipientId: string;
@@ -17,6 +24,7 @@ export interface NotificationCreateInput {
   bookingId?: string;
   salonId?: string;
   barberId?: string;
+  eventKey?: string;
   priority?: 'LOW' | 'NORMAL' | 'HIGH';
   metadata?: Record<string, unknown>;
   channel?: 'IN_APP' | 'EMAIL' | 'SMS' | 'WHATSAPP' | 'PUSH';
@@ -29,11 +37,22 @@ export interface NotificationQueryOptions {
   type?: NotificationType;
 }
 
-export async function createNotification(input: NotificationCreateInput): Promise<INotification> {
+function isDuplicateKeyError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 11000;
+}
+
+export async function createNotification(input: NotificationCreateInput): Promise<INotification | null> {
   await connectDB();
 
-  const notification = await Notification.create({
-    recipientId: new Types.ObjectId(input.recipientId),
+  const recipientId = new Types.ObjectId(input.recipientId);
+  const channel = input.channel ?? 'IN_APP';
+  if (input.recipientRole === USER_ROLES.CUSTOMER && channel === 'IN_APP') {
+    const customer = await User.findById(recipientId).select('notificationPreferences.inApp');
+    if (customer?.notificationPreferences?.inApp === false) return null;
+  }
+
+  const notificationData = {
+    recipientId,
     recipientRole: input.recipientRole,
     type: input.type,
     title: input.title,
@@ -42,12 +61,30 @@ export async function createNotification(input: NotificationCreateInput): Promis
     salonId: input.salonId ? new Types.ObjectId(input.salonId) : undefined,
     barberId: input.barberId ? new Types.ObjectId(input.barberId) : undefined,
     priority: input.priority ?? NOTIFICATION_PRIORITY.NORMAL,
-    channel: input.channel ?? 'IN_APP',
+    channel,
     metadata: input.metadata ?? {},
     isRead: false,
-  });
+    ...(input.eventKey ? { eventKey: input.eventKey } : {}),
+  };
 
-  return notification;
+  if (!input.eventKey) {
+    return Notification.create(notificationData);
+  }
+
+  try {
+    const notification = await Notification.findOneAndUpdate(
+      { recipientId, eventKey: input.eventKey },
+      { $setOnInsert: notificationData },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
+    );
+    if (!notification) throw new Error('NOTIFICATION_UPSERT_FAILED');
+    return notification;
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) throw error;
+    const existing = await Notification.findOne({ recipientId, eventKey: input.eventKey });
+    if (!existing) throw error;
+    return existing;
+  }
 }
 
 export async function createBulkNotifications(inputs: NotificationCreateInput[]): Promise<INotification[]> {
@@ -56,7 +93,14 @@ export async function createBulkNotifications(inputs: NotificationCreateInput[])
   }
 
   const created = await Promise.all(inputs.map((input) => createNotification(input)));
-  return created;
+  return created.filter((notification): notification is INotification => notification !== null);
+}
+
+async function resolveNotifications(
+  notifications: Array<Promise<INotification | null>>,
+): Promise<INotification[]> {
+  const resolved = await Promise.all(notifications);
+  return resolved.filter((notification): notification is INotification => notification !== null);
 }
 
 export async function getUserNotifications(
@@ -165,23 +209,32 @@ function getObjectId(value: unknown): string | null {
   return null;
 }
 
-async function getBookingRecipients(bookingId: string): Promise<Array<{ recipientId: string; recipientRole: (typeof USER_ROLES)[keyof typeof USER_ROLES] }>> {
-  const booking = await Booking.findById(bookingId).populate(['customer', 'salon', 'barber']);
-  if (!booking) {
-    return [];
+type BookingRecipient = { recipientId: string; recipientRole: (typeof USER_ROLES)[keyof typeof USER_ROLES] };
+
+async function getSalonPersonnel(salonId: string): Promise<BookingRecipient[]> {
+  const salon = await Salon.findById(salonId).select('owner staff');
+  if (!salon) return [];
+  const recipients = new Map<string, BookingRecipient['recipientRole']>();
+  const ownerId = getObjectId(salon.owner);
+  if (ownerId) recipients.set(ownerId, USER_ROLES.SALON_OWNER);
+  for (const staffId of salon.staff ?? []) {
+    const id = getObjectId(staffId);
+    if (id && !recipients.has(id)) recipients.set(id, USER_ROLES.SALON_STAFF);
   }
+  return Array.from(recipients, ([recipientId, recipientRole]) => ({ recipientId, recipientRole }));
+}
 
-  const recipients = new Map<string, (typeof USER_ROLES)[keyof typeof USER_ROLES]>();
-
+async function getBookingRecipients(bookingId: string): Promise<BookingRecipient[]> {
+  const booking = await Booking.findById(bookingId);
+  if (!booking) return [];
+  const recipients = new Map<string, BookingRecipient['recipientRole']>();
   const customerId = getObjectId(booking.customer);
   if (customerId) {
     recipients.set(customerId, USER_ROLES.CUSTOMER);
   }
 
-  const salon = await Salon.findById(booking.salon).select('owner name');
-  const salonOwnerId = salon ? getObjectId(salon.owner) : null;
-  if (salonOwnerId) {
-    recipients.set(salonOwnerId, USER_ROLES.SALON_OWNER);
+  for (const person of await getSalonPersonnel(booking.salon.toString())) {
+    if (!recipients.has(person.recipientId)) recipients.set(person.recipientId, person.recipientRole);
   }
 
   const barber = await Barber.findById(booking.barber).select('user name');
@@ -190,7 +243,7 @@ async function getBookingRecipients(bookingId: string): Promise<Array<{ recipien
     recipients.set(barberUserId, USER_ROLES.BARBER);
   }
 
-  return Array.from(recipients.entries()).map(([recipientId, recipientRole]) => ({ recipientId, recipientRole }));
+  return Array.from(recipients, ([recipientId, recipientRole]) => ({ recipientId, recipientRole }));
 }
 
 export async function notifyBookingCreated(bookingId: string): Promise<INotification[]> {
@@ -211,18 +264,27 @@ export async function notifyBookingCreated(bookingId: string): Promise<INotifica
   const inputs = recipients.map(({ recipientId, recipientRole }) => ({
     recipientId,
     recipientRole,
-    type: recipientRole === USER_ROLES.CUSTOMER ? NOTIFICATION_TYPES.BOOKING_CREATED : recipientRole === USER_ROLES.SALON_OWNER ? NOTIFICATION_TYPES.SALON_BOOKING_RECEIVED : NOTIFICATION_TYPES.BARBER_BOOKING_ASSIGNED,
-    title: recipientRole === USER_ROLES.CUSTOMER ? 'Booking request created' : recipientRole === USER_ROLES.SALON_OWNER ? 'New booking received' : 'New appointment assigned',
+    type: recipientRole === USER_ROLES.CUSTOMER
+      ? NOTIFICATION_TYPES.BOOKING_CREATED
+      : recipientRole === USER_ROLES.BARBER
+        ? NOTIFICATION_TYPES.BARBER_BOOKING_ASSIGNED
+        : NOTIFICATION_TYPES.SALON_BOOKING_RECEIVED,
+    title: recipientRole === USER_ROLES.CUSTOMER
+      ? 'Booking request created'
+      : recipientRole === USER_ROLES.BARBER
+        ? 'New appointment assigned'
+        : 'New booking received',
     message: recipientRole === USER_ROLES.CUSTOMER
       ? `Your booking request for ${serviceName} at ${salonName} has been created.`
-      : recipientRole === USER_ROLES.SALON_OWNER
-        ? `New booking received from ${customerName} for ${serviceName}.`
-        : `New appointment assigned to you at ${salonName} for ${serviceName}.`,
+      : recipientRole === USER_ROLES.BARBER
+        ? `New appointment assigned to you at ${salonName} for ${serviceName}.`
+        : `New booking received from ${customerName} for ${serviceName}.`,
     bookingId,
     salonId: booking.salon ? booking.salon.toString() : undefined,
     barberId: booking.barber ? booking.barber.toString() : undefined,
     priority: NOTIFICATION_PRIORITY.NORMAL,
     metadata: { bookingNumber: booking.bookingNumber },
+    eventKey: getBookingNotificationEventKey(bookingId, 'created'),
   }));
 
   return createBulkNotifications(inputs);
@@ -233,12 +295,13 @@ export async function notifyBookingConfirmed(bookingId: string): Promise<INotifi
   if (!booking) {
     return [];
   }
+  if (booking.status !== BOOKING_STATUS.CONFIRMED) return [];
 
   const customerId = getObjectId(booking.customer);
   const salonId = booking.salon ? booking.salon.toString() : undefined;
   const barberId = booking.barber ? booking.barber.toString() : undefined;
 
-  const notifications: Array<Promise<INotification>> = [];
+  const notifications: Array<Promise<INotification | null>> = [];
 
   if (customerId) {
     notifications.push(createNotification({
@@ -252,6 +315,7 @@ export async function notifyBookingConfirmed(bookingId: string): Promise<INotifi
       barberId,
       priority: NOTIFICATION_PRIORITY.NORMAL,
       metadata: { bookingNumber: booking.bookingNumber },
+      eventKey: getBookingNotificationEventKey(bookingId, 'confirmed'),
     }));
   }
 
@@ -270,17 +334,17 @@ export async function notifyBookingConfirmed(bookingId: string): Promise<INotifi
         barberId,
         priority: NOTIFICATION_PRIORITY.NORMAL,
         metadata: { bookingNumber: booking.bookingNumber },
+        eventKey: getBookingNotificationEventKey(bookingId, 'confirmed'),
       }));
     }
   }
 
   if (salonId) {
-    const salonRecord = await Salon.findById(salonId).select('owner');
-    const salonOwnerId = salonRecord ? getObjectId(salonRecord.owner) : null;
-    if (salonOwnerId) {
+    const personnel = await getSalonPersonnel(salonId);
+    for (const person of personnel) {
       notifications.push(createNotification({
-        recipientId: salonOwnerId,
-        recipientRole: USER_ROLES.SALON_OWNER,
+        recipientId: person.recipientId,
+        recipientRole: person.recipientRole,
         type: NOTIFICATION_TYPES.SALON_BOOKING_RECEIVED,
         title: 'Booking confirmed',
         message: `Booking ${booking.bookingNumber} has been confirmed.`,
@@ -289,11 +353,12 @@ export async function notifyBookingConfirmed(bookingId: string): Promise<INotifi
         barberId,
         priority: NOTIFICATION_PRIORITY.NORMAL,
         metadata: { bookingNumber: booking.bookingNumber },
+        eventKey: getBookingNotificationEventKey(bookingId, 'confirmed'),
       }));
     }
   }
 
-  return Promise.all(notifications);
+  return resolveNotifications(notifications);
 }
 
 export async function notifyBookingCancelled(bookingId: string): Promise<INotification[]> {
@@ -301,12 +366,13 @@ export async function notifyBookingCancelled(bookingId: string): Promise<INotifi
   if (!booking) {
     return [];
   }
+  if (booking.status !== BOOKING_STATUS.CANCELLED) return [];
 
   const customerId = getObjectId(booking.customer);
   const salonId = booking.salon ? booking.salon.toString() : undefined;
   const barberId = booking.barber ? booking.barber.toString() : undefined;
 
-  const notifications: Array<Promise<INotification>> = [];
+  const notifications: Array<Promise<INotification | null>> = [];
 
   if (customerId) {
     notifications.push(createNotification({
@@ -320,16 +386,16 @@ export async function notifyBookingCancelled(bookingId: string): Promise<INotifi
       barberId,
       priority: NOTIFICATION_PRIORITY.HIGH,
       metadata: { bookingNumber: booking.bookingNumber },
+      eventKey: getBookingNotificationEventKey(bookingId, 'cancelled'),
     }));
   }
 
   if (salonId) {
-    const salonRecord = await Salon.findById(salonId).select('owner');
-    const salonOwnerId = salonRecord ? getObjectId(salonRecord.owner) : null;
-    if (salonOwnerId) {
+    const personnel = await getSalonPersonnel(salonId);
+    for (const person of personnel) {
       notifications.push(createNotification({
-        recipientId: salonOwnerId,
-        recipientRole: USER_ROLES.SALON_OWNER,
+        recipientId: person.recipientId,
+        recipientRole: person.recipientRole,
         type: NOTIFICATION_TYPES.BOOKING_CANCELLED,
         title: 'Booking cancelled',
         message: `Booking ${booking.bookingNumber} was cancelled.`,
@@ -338,6 +404,7 @@ export async function notifyBookingCancelled(bookingId: string): Promise<INotifi
         barberId,
         priority: NOTIFICATION_PRIORITY.HIGH,
         metadata: { bookingNumber: booking.bookingNumber },
+        eventKey: getBookingNotificationEventKey(bookingId, 'cancelled'),
       }));
     }
   }
@@ -357,11 +424,12 @@ export async function notifyBookingCancelled(bookingId: string): Promise<INotifi
         barberId,
         priority: NOTIFICATION_PRIORITY.HIGH,
         metadata: { bookingNumber: booking.bookingNumber },
+        eventKey: getBookingNotificationEventKey(bookingId, 'cancelled'),
       }));
     }
   }
 
-  return Promise.all(notifications);
+  return resolveNotifications(notifications);
 }
 
 export async function notifyBookingRescheduled(bookingId: string, newAppointmentDate: Date, newStartTime: string): Promise<INotification[]> {
@@ -369,13 +437,23 @@ export async function notifyBookingRescheduled(bookingId: string, newAppointment
   if (!booking) {
     return [];
   }
+  if (
+    ![BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED].includes(booking.status) ||
+    booking.appointmentDate.getTime() !== newAppointmentDate.getTime() ||
+    booking.startTime !== newStartTime
+  ) return [];
 
   const customerId = getObjectId(booking.customer);
   const salonId = booking.salon ? booking.salon.toString() : undefined;
   const barberId = booking.barber ? booking.barber.toString() : undefined;
   const formattedDate = newAppointmentDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 
-  const notifications: Array<Promise<INotification>> = [];
+  const eventKey = getBookingNotificationEventKey(
+    bookingId,
+    'rescheduled',
+    `${newAppointmentDate.toISOString()}:${newStartTime}`,
+  );
+  const notifications: Array<Promise<INotification | null>> = [];
 
   if (customerId) {
     notifications.push(createNotification({
@@ -389,16 +467,16 @@ export async function notifyBookingRescheduled(bookingId: string, newAppointment
       barberId,
       priority: NOTIFICATION_PRIORITY.NORMAL,
       metadata: { bookingNumber: booking.bookingNumber, newStartTime, newAppointmentDate: newAppointmentDate.toISOString() },
+      eventKey,
     }));
   }
 
   if (salonId) {
-    const salonRecord = await Salon.findById(salonId).select('owner');
-    const salonOwnerId = salonRecord ? getObjectId(salonRecord.owner) : null;
-    if (salonOwnerId) {
+    const personnel = await getSalonPersonnel(salonId);
+    for (const person of personnel) {
       notifications.push(createNotification({
-        recipientId: salonOwnerId,
-        recipientRole: USER_ROLES.SALON_OWNER,
+        recipientId: person.recipientId,
+        recipientRole: person.recipientRole,
         type: NOTIFICATION_TYPES.BOOKING_RESCHEDULED,
         title: 'Booking rescheduled',
         message: `Booking ${booking.bookingNumber} has been rescheduled.`,
@@ -407,6 +485,7 @@ export async function notifyBookingRescheduled(bookingId: string, newAppointment
         barberId,
         priority: NOTIFICATION_PRIORITY.NORMAL,
         metadata: { bookingNumber: booking.bookingNumber },
+        eventKey,
       }));
     }
   }
@@ -426,16 +505,42 @@ export async function notifyBookingRescheduled(bookingId: string, newAppointment
         barberId,
         priority: NOTIFICATION_PRIORITY.NORMAL,
         metadata: { bookingNumber: booking.bookingNumber },
+        eventKey,
       }));
     }
   }
 
-  return Promise.all(notifications);
+  return resolveNotifications(notifications);
+}
+
+export async function notifyBookingCompleted(bookingId: string): Promise<INotification[]> {
+  const booking = await Booking.findById(bookingId);
+  if (!booking || booking.status !== BOOKING_STATUS.COMPLETED) return [];
+
+  const customerId = getObjectId(booking.customer);
+  if (!customerId) return [];
+  const notification = await createNotification({
+    recipientId: customerId,
+    recipientRole: USER_ROLES.CUSTOMER,
+    type: NOTIFICATION_TYPES.APPOINTMENT_COMPLETED,
+    title: 'Appointment completed',
+    message: `Your appointment ${booking.bookingNumber} has been completed.`,
+    bookingId,
+    salonId: booking.salon.toString(),
+    barberId: booking.barber.toString(),
+    priority: NOTIFICATION_PRIORITY.NORMAL,
+    metadata: { bookingNumber: booking.bookingNumber },
+    eventKey: getBookingNotificationEventKey(bookingId, 'completed'),
+  });
+  return notification ? [notification] : [];
 }
 
 export async function notifyPaymentSuccess(bookingId: string): Promise<INotification[]> {
   const booking = await Booking.findById(bookingId).populate(['customer']);
   if (!booking) {
+    return [];
+  }
+  if (booking.status !== BOOKING_STATUS.CONFIRMED || booking.paymentStatus !== PAYMENT_STATUS.PAID) {
     return [];
   }
 
@@ -453,9 +558,10 @@ export async function notifyPaymentSuccess(bookingId: string): Promise<INotifica
     bookingId,
     priority: NOTIFICATION_PRIORITY.NORMAL,
     metadata: { bookingNumber: booking.bookingNumber },
+    eventKey: getBookingNotificationEventKey(bookingId, 'payment-success'),
   });
 
-  return [notification];
+  return notification ? [notification] : [];
 }
 
 export async function notifyPaymentFailed(bookingId: string, message?: string): Promise<INotification[]> {
@@ -478,14 +584,15 @@ export async function notifyPaymentFailed(bookingId: string, message?: string): 
     bookingId,
     priority: NOTIFICATION_PRIORITY.HIGH,
     metadata: { bookingNumber: booking.bookingNumber },
+    eventKey: getBookingNotificationEventKey(bookingId, 'payment-failed'),
   });
 
-  return [notification];
+  return notification ? [notification] : [];
 }
 
 export async function notifyPaymentRefunded(bookingId: string): Promise<INotification[]> {
   const booking = await Booking.findById(bookingId).populate(['customer']);
-  if (!booking) {
+  if (!booking || booking.paymentStatus !== PAYMENT_STATUS.REFUNDED) {
     return [];
   }
 
@@ -503,65 +610,44 @@ export async function notifyPaymentRefunded(bookingId: string): Promise<INotific
     bookingId,
     priority: NOTIFICATION_PRIORITY.NORMAL,
     metadata: { bookingNumber: booking.bookingNumber },
+    eventKey: getBookingNotificationEventKey(bookingId, 'payment-refunded'),
   });
 
-  return [notification];
+  return notification ? [notification] : [];
 }
 
-export async function notifyAppointmentReminder(bookingId: string, reminderType: '24H' | '2H' | 'TODAY'): Promise<INotification[]> {
-  const booking = await Booking.findById(bookingId).populate(['customer', 'salon', 'barber']);
+export async function notifyAppointmentReminder(
+  bookingId: string,
+  reminderType: AppointmentReminderType,
+): Promise<INotification[]> {
+  const booking = await Booking.findById(bookingId);
   if (!booking) {
     return [];
   }
+  if (!isAppointmentReminderEligible(booking.status, booking.appointmentDate, booking.startTime)) return [];
 
-  const reminderKey = `${bookingId}:${reminderType}`;
-  const recipients = new Map<string, (typeof USER_ROLES)[keyof typeof USER_ROLES]>();
-
-  const customerId = getObjectId(booking.customer);
-  if (customerId) {
-    recipients.set(customerId, USER_ROLES.CUSTOMER);
-  }
-
-  const salonRecord = await Salon.findById(booking.salon).select('owner');
-  const salonOwnerId = salonRecord ? getObjectId(salonRecord.owner) : null;
-  if (salonOwnerId) {
-    recipients.set(salonOwnerId, USER_ROLES.SALON_OWNER);
-  }
-
-  const barberRecord = await Barber.findById(booking.barber).select('user');
-  const barberUserId = barberRecord ? getObjectId(barberRecord.user) : null;
-  if (barberUserId) {
-    recipients.set(barberUserId, USER_ROLES.BARBER);
-  }
-
-  const notifications = Array.from(recipients.entries()).map(async ([recipientId, recipientRole]) => {
-    const existing = await Notification.findOne({
-      recipientId: new Types.ObjectId(recipientId),
-      type: NOTIFICATION_TYPES.APPOINTMENT_REMINDER,
-      bookingId: new Types.ObjectId(bookingId),
-      'metadata.reminderKey': reminderKey,
-    });
-
-    if (existing) {
-      return null;
-    }
-
-    return createNotification({
-      recipientId,
-      recipientRole,
-      type: NOTIFICATION_TYPES.APPOINTMENT_REMINDER,
-      title: reminderType === 'TODAY' ? 'Appointment today' : 'Upcoming appointment',
-      message: reminderType === 'TODAY'
-        ? `Your appointment with ${booking.bookingNumber} is today.`
-        : `Your appointment with ${booking.bookingNumber} is coming up soon.`,
-      bookingId,
-      salonId: booking.salon ? booking.salon.toString() : undefined,
-      barberId: booking.barber ? booking.barber.toString() : undefined,
-      priority: NOTIFICATION_PRIORITY.NORMAL,
-      metadata: { bookingNumber: booking.bookingNumber, reminderKey, reminderType },
-    });
-  });
-
-  const resolved = await Promise.all(notifications);
-  return resolved.filter((notification): notification is INotification => notification !== null);
+  const appointmentAt = new Date(booking.appointmentDate);
+  const [hours, minutes] = booking.startTime.split(':').map(Number);
+  appointmentAt.setHours(hours, minutes, 0, 0);
+  const reminderKey = getBookingNotificationEventKey(
+    bookingId,
+    `reminder-${reminderType}`,
+    appointmentAt.toISOString(),
+  );
+  const recipients = await getBookingRecipients(bookingId);
+  return createBulkNotifications(recipients.map(({ recipientId, recipientRole }) => ({
+    recipientId,
+    recipientRole,
+    type: NOTIFICATION_TYPES.APPOINTMENT_REMINDER,
+    title: reminderType === 'TODAY' ? 'Appointment today' : 'Upcoming appointment',
+    message: reminderType === 'TODAY'
+      ? `Your appointment with ${booking.bookingNumber} is today.`
+      : `Your appointment with ${booking.bookingNumber} is coming up soon.`,
+    bookingId,
+    salonId: booking.salon.toString(),
+    barberId: booking.barber.toString(),
+    priority: NOTIFICATION_PRIORITY.NORMAL,
+    metadata: { bookingNumber: booking.bookingNumber, reminderKey, reminderType },
+    eventKey: reminderKey,
+  })));
 }

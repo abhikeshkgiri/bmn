@@ -193,9 +193,9 @@ export async function listServices(options: ListServicesOptions = {}, currentUse
 
   if (isOwner) {
     const ownedSalon = salonId
-      ? await Salon.findById(salonId).select('_id owner').lean()
+      ? await Salon.findOne({ _id: salonId, owner: currentUser!._id }).select('_id owner').lean()
       : await Salon.findOne({ owner: currentUser!._id }).select('_id owner').lean();
-    if (ownedSalon && ownedSalon.owner.toString() !== currentUser!._id) {
+    if (salonId && !ownedSalon) {
       throw new Error('SERVICE_ACCESS_DENIED: You do not own this salon');
     }
     query.salon = ownedSalon?._id ?? null;
@@ -297,6 +297,7 @@ export async function updateService(
 
   // Check authorization
   const isOwner = async () => {
+    if (currentUser.role !== USER_ROLES.SALON_OWNER) return false;
     const salon = await Salon.findById(service.salon);
     return salon && salon.owner.toString() === currentUser._id;
   };
@@ -340,7 +341,7 @@ export async function updateService(
     service.duration = input.duration;
   }
 
-  if (input.price) {
+  if (input.price !== undefined) {
     service.price = input.price;
   }
 
@@ -373,7 +374,8 @@ export async function updateServiceStatus(
     throw new Error('SALON_NOT_FOUND: Associated salon not found');
   }
 
-  const isOwner = salon.owner.toString() === currentUser._id;
+  const isOwner = currentUser.role === USER_ROLES.SALON_OWNER &&
+    salon.owner.toString() === currentUser._id;
   const isAdmin =
     currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN;
 
@@ -406,7 +408,8 @@ export async function deleteService(
     throw new Error('SALON_NOT_FOUND: Associated salon not found');
   }
 
-  const isOwner = salon.owner.toString() === currentUser._id;
+  const isOwner = currentUser.role === USER_ROLES.SALON_OWNER &&
+    salon.owner.toString() === currentUser._id;
   const isAdmin =
     currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN;
 

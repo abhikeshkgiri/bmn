@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminAccess } from '@/lib/admin';
 import { requireAuth } from '@/lib/auth';
-import { AdminInputError, listSalonsForAdmin, updateSalonVerification } from '@/services/admin.service';
+import { AdminConflictError, AdminInputError, listSalonsForAdmin, updateSalonVerification } from '@/services/admin.service';
+import { SalonApprovalDecisionSchema } from '@/validations/admin-salon.schema';
 import type { AuthUser } from '@/types';
+import { ZodError } from 'zod';
 
 export async function GET(request: NextRequest) {
   let currentUser: AuthUser;
@@ -16,7 +18,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
     const status = searchParams.get('status') ?? undefined;
-    if (status && !['pending', 'active', 'rejected'].includes(status)) {
+    if (status && !['pending', 'active', 'rejected', 'inactive'].includes(status)) {
       return NextResponse.json({ success: false, error: { code: 'INVALID_FILTER', message: 'Unsupported salon status filter' } }, { status: 400 });
     }
     const from = searchParams.get('from');
@@ -52,15 +54,16 @@ export async function PATCH(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
-    if (
-      typeof body.salonId !== 'string' ||
-      typeof body.isVerified !== 'boolean' ||
-      (body.isVerified === false && (typeof body.reason !== 'string' || !body.reason.trim()))
-    ) throw new AdminInputError('Invalid salon approval request');
-    const salon = await updateSalonVerification(currentUser, body.salonId, body.isVerified, typeof body.reason === 'string' ? body.reason.trim() : undefined);
+    const body = SalonApprovalDecisionSchema.parse(await request.json());
+    const salon = await updateSalonVerification(currentUser, body.salonId, body.isVerified, body.reason);
     return NextResponse.json({ success: true, data: salon });
   } catch (error) {
+    if (error instanceof ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_INPUT', message: 'Invalid salon approval request.' } }, { status: 400 });
+    }
+    if (error instanceof AdminConflictError) {
+      return NextResponse.json({ success: false, error: { code: 'SALON_APPROVAL_CONFLICT', message: error.message } }, { status: 409 });
+    }
     if (error instanceof Error && error.message.startsWith('CITY_NOT_SUPPORTED:')) {
       return NextResponse.json({ success: false, error: { code: 'CITY_NOT_SUPPORTED', message: error.message.split(':').slice(1).join(':').trim() } }, { status: 422 });
     }

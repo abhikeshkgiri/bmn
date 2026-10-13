@@ -23,6 +23,7 @@ import {
 } from '@/constants/launch-cities';
 import { APPROVED_SALON_STATUS_FILTER, isSalonApproved } from '@/utils/salon-approval';
 import { buildActiveServiceSearchFilter } from '@/utils/service-search';
+import { canManageSalon } from '@/utils/salon-authorization';
 
 export interface SalonWithOwner extends Omit<ISalon, 'owner'> {
   owner: AuthUser;
@@ -359,10 +360,7 @@ export async function getSalonForOwner(salonId: string, currentUser: AuthUser): 
   }
 
   // Check ownership
-  const isOwner = salon.owner.toString() === currentUser._id;
-  const isAdmin =
-    currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN;
-  if (!isOwner && !isAdmin) {
+  if (!canManageSalon(salon.owner.toString(), currentUser._id, currentUser.role)) {
     throw new Error('SALON_ACCESS_DENIED: You can only view your own salon');
   }
 
@@ -385,7 +383,8 @@ export async function updateSalon(
   }
 
   // Check authorization
-  const isOwner = salon.owner.toString() === currentUser._id;
+  const isOwner = currentUser.role === USER_ROLES.SALON_OWNER &&
+    salon.owner.toString() === currentUser._id;
   const isAdmin =
     currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN;
   if (!isOwner && !isAdmin) {
@@ -410,6 +409,7 @@ export async function updateSalon(
   if (input.description !== undefined) salon.description = input.description || '';
   if (input.logo !== undefined) salon.logo = input.logo || null;
   if (input.coverImage !== undefined) salon.coverImage = input.coverImage || null;
+  if (input.images !== undefined) salon.images = input.images;
 
   // Address update
   if (input.address) {
@@ -480,11 +480,7 @@ export async function activateSalon(salonId: string, currentUser: AuthUser): Pro
   }
 
   // Check authorization
-  const isOwner = salon.owner.toString() === currentUser._id;
-  const isAdmin =
-    currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN;
-
-  if (!isOwner && !isAdmin) {
+  if (!canManageSalon(salon.owner.toString(), currentUser._id, currentUser.role)) {
     throw new Error('SALON_ACCESS_DENIED: You can only manage your own salon');
   }
 
@@ -512,11 +508,7 @@ export async function deactivateSalon(salonId: string, currentUser: AuthUser): P
   }
 
   // Check authorization
-  const isOwner = salon.owner.toString() === currentUser._id;
-  const isAdmin =
-    currentUser.role === USER_ROLES.ADMIN || currentUser.role === USER_ROLES.SUPER_ADMIN;
-
-  if (!isOwner && !isAdmin) {
+  if (!canManageSalon(salon.owner.toString(), currentUser._id, currentUser.role)) {
     throw new Error('SALON_ACCESS_DENIED: You can only manage your own salon');
   }
 
@@ -546,15 +538,29 @@ export async function verifySalon(salonId: string, currentUser: AuthUser): Promi
   if (!normalizeSupportedSalonLocation(salon.address.city, salon.address.state)) {
     throw new Error(`CITY_NOT_SUPPORTED: ${UNSUPPORTED_CITY_MESSAGE}`);
   }
-  salon.isVerified = true;
-  salon.isActive = true;
-  salon.approvalStatus = 'APPROVED';
-  salon.rejectionReason = null;
-  salon.approvalUpdatedAt = new Date();
-  salon.approvalUpdatedBy = new Types.ObjectId(currentUser._id);
-  await salon.save();
+  const updatedSalon = await Salon.findOneAndUpdate(
+    {
+      _id: salon._id,
+      approvalStatus: salon.approvalStatus ?? null,
+      isVerified: salon.isVerified,
+      isActive: salon.isActive,
+      approvalUpdatedAt: salon.approvalUpdatedAt ?? null,
+    },
+    {
+      $set: {
+        isVerified: true,
+        isActive: true,
+        approvalStatus: 'APPROVED',
+        rejectionReason: null,
+        approvalUpdatedAt: new Date(),
+        approvalUpdatedBy: new Types.ObjectId(currentUser._id),
+      },
+    },
+    { new: true, runValidators: true },
+  );
+  if (!updatedSalon) throw new Error('SALON_APPROVAL_CONFLICT: Salon approval changed while it was being reviewed');
   void recordAuditEvent({ actor: currentUser, action: 'SALON_VERIFIED', entityType: 'Salon', entityId: salonId });
-  return salon;
+  return updatedSalon;
 }
 
 /**
@@ -574,15 +580,29 @@ export async function unverifySalon(salonId: string, currentUser: AuthUser): Pro
     throw new Error('SALON_NOT_FOUND: Salon not found');
   }
 
-  salon.isVerified = false;
-  salon.isActive = false;
-  salon.approvalStatus = 'PENDING';
-  salon.rejectionReason = null;
-  salon.approvalUpdatedAt = new Date();
-  salon.approvalUpdatedBy = new Types.ObjectId(currentUser._id);
-  await salon.save();
+  const updatedSalon = await Salon.findOneAndUpdate(
+    {
+      _id: salon._id,
+      approvalStatus: salon.approvalStatus ?? null,
+      isVerified: salon.isVerified,
+      isActive: salon.isActive,
+      approvalUpdatedAt: salon.approvalUpdatedAt ?? null,
+    },
+    {
+      $set: {
+        isVerified: false,
+        isActive: false,
+        approvalStatus: 'PENDING',
+        rejectionReason: null,
+        approvalUpdatedAt: new Date(),
+        approvalUpdatedBy: new Types.ObjectId(currentUser._id),
+      },
+    },
+    { new: true, runValidators: true },
+  );
+  if (!updatedSalon) throw new Error('SALON_APPROVAL_CONFLICT: Salon approval changed while it was being reviewed');
   void recordAuditEvent({ actor: currentUser, action: 'SALON_UNVERIFIED', entityType: 'Salon', entityId: salonId });
-  return salon;
+  return updatedSalon;
 }
 
 /**
