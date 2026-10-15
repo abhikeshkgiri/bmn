@@ -17,7 +17,10 @@ export async function POST(request: NextRequest) {
   if (!user) {
     return NextResponse.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } }, { status: 401 });
   }
-  if (user.role !== USER_ROLES.SALON_OWNER) {
+  const canUploadSalonFiles = user.role === USER_ROLES.SALON_OWNER;
+  const canUploadProfileImage =
+    user.role === USER_ROLES.CUSTOMER || user.role === USER_ROLES.BARBER;
+  if (!canUploadSalonFiles && !canUploadProfileImage) {
     return NextResponse.json({ success: false, error: { code: 'FORBIDDEN', message: 'Salon owner access required' } }, { status: 403 });
   }
 
@@ -36,6 +39,9 @@ export async function POST(request: NextRequest) {
     const file = form.get('file');
     if (typeof kindValue !== 'string' || !isSalonUploadKind(kindValue) || !(file instanceof File)) {
       return NextResponse.json({ success: false, error: { code: 'INVALID_UPLOAD', message: 'Choose a supported file and upload category.' } }, { status: 400 });
+    }
+    if (!canUploadSalonFiles && kindValue !== 'profile') {
+      return NextResponse.json({ success: false, error: { code: 'FORBIDDEN', message: 'Only account profile photos can be uploaded for this account.' } }, { status: 403 });
     }
     if (!file.size || file.size > getSalonUploadLimit(kindValue)) {
       return NextResponse.json({ success: false, error: { code: 'FILE_TOO_LARGE', message: `File must be smaller than ${getSalonUploadLimit(kindValue) / (1024 * 1024)} MB.` } }, { status: 413 });

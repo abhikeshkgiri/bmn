@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Loading';
+import SalonFileUpload from '@/components/salon/SalonFileUpload';
 import { USER_ROLES } from '@/constants/roles';
 
 type BarberFormState = {
@@ -134,17 +135,15 @@ export default function BarberProfilePage() {
                 </div>
               </div>
 
-              <div className="rounded-lg border border-border bg-neutral-50 p-4">
-                <p className="text-sm font-medium">Profile photograph</p>
-                {form.profileImage ? (
-                  <img src={form.profileImage} alt="Current barber profile" className="mt-3 h-20 w-20 rounded-full object-cover" />
-                ) : (
-                  <p className="mt-2 text-sm text-foreground-secondary">No photograph uploaded.</p>
-                )}
-                <p className="mt-2 text-xs text-foreground-secondary">
-                  Secure photo uploads are not configured yet. Your current image is preserved; URL edits are disabled.
-                </p>
-              </div>
+              <SalonFileUpload
+                kind="profile"
+                label="Profile photo (JPG, PNG, WebP; max 8 MB)"
+                accept="image/jpeg,image/png,image/webp"
+                previewUrl={form.profileImage || undefined}
+                onUploaded={(result) => {
+                  if (result.url) setForm((current) => ({ ...current, profileImage: result.url || '' }));
+                }}
+              />
 
               <div>
                 <label className="block text-sm font-medium mb-1">Bio</label>

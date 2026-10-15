@@ -10,10 +10,24 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+function isSafeUploadedImage(value: string): boolean {
+  if (!value.startsWith('/uploads/')) return false;
+  const segments = value.slice('/uploads/'.length).split('/');
+  return (
+    segments.length >= 2 &&
+    segments.every((segment) => segment !== '' && segment !== '.' && segment !== '..' && /^[a-zA-Z0-9._-]+$/.test(segment)) &&
+    !segments.includes('.staging') &&
+    /\.(jpg|png|webp)$/i.test(value)
+  );
+}
+
 export const CustomerProfileUpdateSchema = z.object({
   name: z.string().trim().min(2).max(100).optional(),
   email: z.string().trim().email().max(160).optional().or(z.literal('')),
-  avatar: z.string().url().max(500).refine(isHttpUrl, 'Avatar URL must use HTTP or HTTPS').optional().or(z.literal('')),
+  avatar: z.string().max(500).refine(
+    (value) => isHttpUrl(value) || isSafeUploadedImage(value),
+    'Avatar must be an HTTPS image URL or a saved image upload',
+  ).optional().or(z.literal('')),
   notificationPreferences: z.object({
     inApp: z.boolean(),
     push: z.boolean(),

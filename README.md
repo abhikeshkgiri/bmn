@@ -57,7 +57,7 @@ On Windows, the project runner uses Next.js Webpack for development and producti
 
 ### Salon uploads
 
-Salon owners upload logo, cover, gallery, service, and barber images through the owner pages. Public images are stored under `public/uploads/<salon-name>-<salon-id>/` and served as salon image assets. Only JPG, PNG, and WebP images are accepted (8 MB maximum).
+Salon owners upload logo, cover, gallery, service, and barber images through the owner pages. Public salon images are stored under `public/uploads/<salon-name>-<salon-id>/` and served as salon image assets. Customer and barber account profile images are stored under `public/uploads/profiles/<account-id>/`. Only JPG, PNG, and WebP images are accepted (8 MB maximum).
 
 Owner Aadhaar and PAN uploads are restricted to PDF, JPG, or PNG (10 MB maximum), encrypted at rest with AES-256-GCM, and stored outside `public/` under `private-uploads/`. Only the salon owner and administrators can download them through the authenticated document endpoint. Set `SALON_DOCUMENT_ENCRYPTION_KEY` in `.env.local` to a locally generated base64-encoded 32-byte key before uploading documents. Keep that key backed up securely: documents cannot be decrypted without it.
 

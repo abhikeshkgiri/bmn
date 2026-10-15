@@ -19,7 +19,7 @@ function isUploadResult(value: unknown): value is SalonUploadResult {
 }
 
 interface SalonFileUploadProps {
-  kind: 'aadhaar' | 'pan' | 'logo' | 'cover' | 'gallery' | 'service' | 'barber';
+  kind: 'aadhaar' | 'pan' | 'logo' | 'cover' | 'gallery' | 'service' | 'barber' | 'profile';
   label: string;
   accept: string;
   onUploaded: (result: SalonUploadResult) => void;

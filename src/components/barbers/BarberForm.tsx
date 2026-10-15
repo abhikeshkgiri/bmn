@@ -7,6 +7,7 @@ import { BarberCreateSchema, BarberUpdateSchema, type BarberCreateInput, type Ba
 import { BARBER_SPECIALIZATION } from '@/constants/services';
 import Button from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import SalonFileUpload from '@/components/salon/SalonFileUpload';
 
 interface Service {
   _id: string;
@@ -67,6 +68,7 @@ export default function BarberForm({
     register,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
     reset,
   } = useForm<BarberCreateInput | BarberUpdateInput>({
@@ -205,14 +207,14 @@ export default function BarberForm({
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-foreground mb-2">
-            Profile Image URL
-          </label>
-          <Input
-            {...register('profileImage')}
-            type="url"
-            placeholder="https://..."
-            disabled={isLoading}
+          <SalonFileUpload
+            kind="barber"
+            label="Profile image (JPG, PNG, WebP; max 8 MB)"
+            accept="image/jpeg,image/png,image/webp"
+            previewUrl={watch('profileImage') || undefined}
+            onUploaded={(result) => {
+              if (result.url) setValue('profileImage', result.url, { shouldDirty: true, shouldValidate: true });
+            }}
           />
           {errors.profileImage && (
             <p className="text-sm text-red-600 mt-1">
@@ -347,13 +349,15 @@ export default function BarberForm({
                 key={index}
                 className="p-3 bg-background rounded-lg space-y-2 border border-border"
               >
-                <input
-                  type="url"
-                  value={item.image}
-                  onChange={(e) => handlePortfolioUpdate(index, 'image', e.target.value)}
-                  placeholder="Image URL *"
-                  className="w-full px-3 py-2 border border-border rounded text-sm bg-white text-foreground"
-                  disabled={isLoading}
+                <SalonFileUpload
+                  kind="barber"
+                  label="Portfolio image (JPG, PNG, WebP; max 8 MB)"
+                  accept="image/jpeg,image/png,image/webp"
+                  previewUrl={item.image || undefined}
+                  required={!item.image}
+                  onUploaded={(result) => {
+                    if (result.url) handlePortfolioUpdate(index, 'image', result.url);
+                  }}
                 />
                 <input
                   type="text"

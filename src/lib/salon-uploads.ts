@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export type SalonUploadKind = 'aadhaar' | 'pan' | 'logo' | 'cover' | 'gallery' | 'service' | 'barber';
+export type SalonUploadKind = 'aadhaar' | 'pan' | 'logo' | 'cover' | 'gallery' | 'service' | 'barber' | 'profile';
 export type SalonIdentityKind = Extract<SalonUploadKind, 'aadhaar' | 'pan'>;
 export type SalonImageKind = Exclude<SalonUploadKind, SalonIdentityKind>;
 
@@ -12,7 +12,7 @@ const MAX_IDENTITY_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 export function isSalonUploadKind(value: string): value is SalonUploadKind {
-  return ['aadhaar', 'pan', 'logo', 'cover', 'gallery', 'service', 'barber'].includes(value);
+  return ['aadhaar', 'pan', 'logo', 'cover', 'gallery', 'service', 'barber', 'profile'].includes(value);
 }
 
 export function isSalonIdentityKind(value: SalonUploadKind): value is SalonIdentityKind {
@@ -109,7 +109,9 @@ export async function saveSalonUpload(options: {
 
   const folder = options.salon
     ? getSalonUploadFolderName(options.salon.name, options.salon._id)
-    : path.join('.staging', ownerId);
+    : options.kind === 'profile'
+      ? path.join('profiles', ownerId)
+      : path.join('.staging', ownerId);
   const relativeImagePath = path.join(folder, options.kind, filename);
   const destination = path.join(PUBLIC_ROOT, relativeImagePath);
   await mkdir(path.dirname(destination), { recursive: true });

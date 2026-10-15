@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import SalonFileUpload from '@/components/salon/SalonFileUpload';
 
 type Profile = {
   name?: string;
@@ -94,14 +95,14 @@ export default function ProfilePage() {
               type="email"
               maxLength={160}
             />
-            <Input
-              label="Profile photo URL"
-              description="Photo uploads are not available yet. You may use an HTTPS image URL."
-              value={profile.avatar || ''}
-              onChange={(event) => setProfile({ ...profile, avatar: event.target.value })}
-              placeholder="https://example.com/photo.jpg"
-              type="url"
-              maxLength={500}
+            <SalonFileUpload
+              kind="profile"
+              label="Profile photo (JPG, PNG, WebP; max 8 MB)"
+              accept="image/jpeg,image/png,image/webp"
+              previewUrl={profile.avatar || undefined}
+              onUploaded={(result) => {
+                if (result.url) setProfile((current) => ({ ...current, avatar: result.url }));
+              }}
             />
             <div>
               <p className="text-sm font-medium text-foreground">

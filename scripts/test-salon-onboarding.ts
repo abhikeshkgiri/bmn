@@ -9,6 +9,7 @@ import { isDatabaseUnavailableError } from '../src/lib/db-errors';
 import { getSalonApplicationBlockers } from '../src/utils/salon-application-readiness';
 import { detectAllowedUploadType, getSalonUploadFolderName } from '../src/lib/salon-uploads';
 import { SalonApprovalDecisionSchema, SalonVerificationSchema } from '../src/validations/admin-salon.schema';
+import { CustomerProfileUpdateSchema } from '../src/validations/customer-profile.schema';
 import {
   SalonCreateSchema,
   SalonOwnerUpdateSchema,
@@ -113,6 +114,11 @@ assert.deepEqual(
 assert.deepEqual(detectAllowedUploadType(Buffer.from('%PDF-1.7'), 'aadhaar'), { extension: 'pdf', contentType: 'application/pdf' });
 assert.equal(detectAllowedUploadType(Buffer.from('%PDF-1.7'), 'logo'), null);
 assert.equal(detectAllowedUploadType(Buffer.from('not an image'), 'logo'), null);
+assert.equal(CustomerProfileUpdateSchema.safeParse({
+  avatar: '/uploads/profiles/507f1f77bcf86cd799439011/123e4567-e89b-12d3-a456-426614174000.png',
+}).success, true);
+assert.equal(CustomerProfileUpdateSchema.safeParse({ avatar: '/uploads/.staging/file.png' }).success, false);
+assert.equal(CustomerProfileUpdateSchema.safeParse({ avatar: '/uploads/../private/file.png' }).success, false);
 assert.equal(getSalonUploadFolderName('Looks Salon', '507f1f77bcf86cd799439011'), 'looks-salon-507f1f77bcf86cd799439011');
 assert.equal(isSalonApproved({ approvalStatus: 'PENDING', isVerified: true }), false);
 assert.equal(isSalonApproved({ approvalStatus: 'APPROVED', isVerified: true }), true);

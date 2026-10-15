@@ -9,6 +9,7 @@ import { requireAuth } from '@/lib/auth';
 import { verifySalon, unverifySalon } from '@/services/salon.service';
 import { SalonVerificationSchema } from '@/validations/admin-salon.schema';
 import { ZodError } from 'zod';
+import { revalidateHomeSalons } from '@/lib/home-salon-cache';
 
 export async function PATCH(
   request: NextRequest,
@@ -38,6 +39,7 @@ export async function PATCH(
     const salon = validatedData.isVerified
       ? await verifySalon(id, currentUser)
       : await unverifySalon(id, currentUser);
+    revalidateHomeSalons();
 
     return NextResponse.json(
       {
