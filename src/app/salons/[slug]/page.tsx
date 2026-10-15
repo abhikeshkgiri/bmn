@@ -18,6 +18,7 @@ interface Salon {
   _id: string;
   name: string;
   slug: string;
+  salonType?: string;
   description?: string;
   logo?: string;
   coverImage?: string;
@@ -41,6 +42,11 @@ interface Salon {
     email?: string;
     website?: string;
   };
+  socialLinks?: {
+    instagram?: string;
+    facebook?: string;
+    youtube?: string;
+  };
   openingHours: Partial<{
     [key: string]: {
       isOpen: boolean;
@@ -52,6 +58,7 @@ interface Salon {
   rating: number;
   reviewCount: number;
   isVerified: boolean;
+  isDemoPreview: boolean;
   services: Service[];
   barbers: Barber[];
 }
@@ -70,12 +77,14 @@ interface Service {
 interface Barber {
   _id: string;
   name: string;
+  title?: string;
   slug?: string;
   profileImage?: string;
   bio?: string;
   experienceYears: number;
   rating?: number;
   reviewCount?: number;
+  isDemoPreview?: boolean;
   isAvailable?: boolean;
   isVerified?: boolean;
   isActive?: boolean;
@@ -250,14 +259,26 @@ export default function SalonDetailPage() {
   }
 
   if (error || !salon) {
+    const salonNotFound = error?.includes('not be found') ?? false;
     return (
       <div className="min-h-screen bg-white">
         <div className="max-w-4xl mx-auto px-4 py-12">
           <Card className="p-8 text-center">
             <h1 className="text-2xl font-bold text-foreground mb-2">
-              {error?.includes('not be found') ? 'Salon Not Found' : 'Salon Unavailable'}
+              {salonNotFound ? 'Salon Not Found' : 'Salon Unavailable'}
             </h1>
-            <p className="text-foreground-secondary mb-6">{error || 'This salon could not be found.'}</p>
+            {salonNotFound ? (
+              <div className="mb-6 space-y-3 text-left text-sm text-foreground-secondary">
+                <p>{error}</p>
+                <p>If you are opening a demo salon, it must first be seeded into the development database your app uses.</p>
+                <pre className="overflow-x-auto rounded-lg bg-neutral-100 p-3 text-xs text-foreground">
+                  npm.cmd run seed:feature22-demo -- seed --confirm-database &lt;dev-db-name&gt;
+                </pre>
+                <p>Reload this page after seeding, then sign in with a customer account to continue booking.</p>
+              </div>
+            ) : (
+              <p className="text-foreground-secondary mb-6">{error || 'This salon could not be found.'}</p>
+            )}
             <div className="flex flex-wrap justify-center gap-3">
               {error && !error.includes('not be found') && (
                 <Button variant="primary" onClick={() => setRetryKey((key) => key + 1)}>
@@ -330,17 +351,20 @@ export default function SalonDetailPage() {
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h1 className="text-4xl font-bold text-foreground mb-2">{salon.name}</h1>
+                {salon.salonType && <p className="mb-2 text-sm font-medium uppercase tracking-wide text-foreground-secondary">{salon.salonType.replace(/_/g, ' ')}</p>}
                 <div className="flex items-center gap-3">
-                  {salon.rating > 0 && (
+                  {!salon.isDemoPreview && salon.rating > 0 && (
                     <div className="flex items-center text-yellow-500">
                       <Star size={20} fill="currentColor" />
                       <span className="ml-1 text-lg font-semibold">{salon.rating}</span>
                     </div>
                   )}
-                  {salon.reviewCount > 0 && (
+                  {!salon.isDemoPreview && salon.reviewCount > 0 && (
                     <span className="text-foreground-secondary">({salon.reviewCount} reviews)</span>
                   )}
-                  {salon.isVerified && (
+                  {salon.isDemoPreview ? (
+                    <Badge variant="info">Demo preview</Badge>
+                  ) : salon.isVerified && (
                     <Badge variant="success">
                       <Check size={16} className="mr-1" />
                       Verified
@@ -353,11 +377,16 @@ export default function SalonDetailPage() {
             {salon.description && (
               <p className="text-foreground-secondary text-lg mb-6">{salon.description}</p>
             )}
+            {salon.isDemoPreview && (
+              <p role="note" className="mb-6 rounded-xl border border-info-200 bg-info-50 p-4 text-sm text-info-700">
+                Demo preview only. This business, staff, services, prices, and availability are illustrative, not a real operating salon or live appointment offer.
+              </p>
+            )}
 
             {/* Quick Actions */}
             <div className="flex flex-wrap gap-3">
               <Button variant="primary" onClick={() => router.push(`/book/${encodeURIComponent(salon.slug)}`)}>
-                Book Appointment
+                {salon.isDemoPreview ? 'Preview booking flow' : 'Book Appointment'}
               </Button>
               <FavoriteButton targetType="SALON" targetId={salon._id} />
             </div>
@@ -457,6 +486,17 @@ export default function SalonDetailPage() {
                       : <span className="text-foreground-secondary">{salon.contact.website}</span>}
                   </div>
                 )}
+                {salon.socialLinks && Object.entries(salon.socialLinks).map(([network, value]) => {
+                  const socialUrl = getSafeWebsiteUrl(value);
+                  return socialUrl ? (
+                    <div key={network} className="flex items-center gap-3">
+                      <Globe size={20} className="text-brand-pink" />
+                      <a href={socialUrl} target="_blank" rel="noopener noreferrer" className="text-brand-pink hover:text-brand-pink-hover">
+                        {network[0].toUpperCase() + network.slice(1)}
+                      </a>
+                    </div>
+                  ) : null;
+                })}
               </div>
             </Card>
 
@@ -541,7 +581,7 @@ export default function SalonDetailPage() {
                   </div>
                   <div className="grid gap-2">
                     {qualifiedBarbers.length === 0 && (
-                      <p className="text-sm text-foreground-secondary">No verified professionals are listed for this service.</p>
+                      <p className="text-sm text-foreground-secondary">No active barber profiles are listed for this service.</p>
                     )}
                     {qualifiedBarbers.map((barber) => (
                       <button
@@ -560,6 +600,7 @@ export default function SalonDetailPage() {
                           />
                           <span>
                             <span className="block font-semibold text-foreground">{barber.name}</span>
+                            {barber.title && <span className="block text-xs text-foreground-secondary">{barber.title}</span>}
                             <span className="block text-xs text-foreground-secondary">
                               {barber.specializations?.length ? barber.specializations.join(' · ') : 'Salon expert'}
                             </span>
@@ -571,7 +612,7 @@ export default function SalonDetailPage() {
                           </span>
                         </span>
                         <span className="text-xs text-foreground-secondary">
-                          {barber.rating ? `${barber.rating} ★` : 'Select'}
+                          {barber.isDemoPreview ? 'Demo preview' : barber.rating ? `${barber.rating} ★` : 'Select'}
                         </span>
                       </button>
                     ))}
@@ -651,7 +692,7 @@ export default function SalonDetailPage() {
                   Review services and continue to the salon&apos;s booking page when you&apos;re ready.
                 </p>
                 <Button variant="primary" fullWidth onClick={() => router.push(`/book/${encodeURIComponent(salon.slug)}`)}>
-                  Continue to booking
+                  {salon.isDemoPreview ? 'Preview booking flow' : 'Continue to booking'}
                 </Button>
               </div>
             </Card>

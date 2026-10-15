@@ -22,6 +22,7 @@ interface Salon extends MapSalon {
   logo?: string;
   isVerified: boolean;
   reviewCount: number;
+  isDemoPreview?: boolean;
 }
 
 export default function NearbySalons() {
@@ -119,7 +120,7 @@ export default function NearbySalons() {
             {searchByCity || latitude === null ? 'Discover Salons' : 'Salons Near You'}
           </h2>
           <p className="mt-1 text-sm text-foreground-secondary">
-            Browse verified listings and genuine salon details.
+            Browse public salon listings; demo previews are clearly identified.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -220,7 +221,11 @@ export default function NearbySalons() {
                   <h3 className="text-base font-semibold text-foreground line-clamp-2">
                     {salon.name}
                   </h3>
-                  {salon.isVerified && (
+                  {salon.isDemoPreview ? (
+                    <Badge variant="info" className="ml-2 flex-shrink-0 text-xs">
+                      Demo preview
+                    </Badge>
+                  ) : salon.isVerified && (
                     <Badge variant="success" className="ml-2 flex-shrink-0 text-xs">
                       ✓
                     </Badge>
@@ -228,7 +233,7 @@ export default function NearbySalons() {
                 </div>
 
                 {/* Rating */}
-                <div className="flex items-center gap-2 mb-2">
+                {!salon.isDemoPreview && <div className="flex items-center gap-2 mb-2">
                   <div className="flex items-center text-yellow-500">
                     <Star size={14} fill="currentColor" />
                     <span className="ml-1 text-sm font-semibold">{salon.rating}</span>
@@ -236,7 +241,10 @@ export default function NearbySalons() {
                   <span className="text-xs text-foreground-secondary">
                     ({salon.reviewCount})
                   </span>
-                </div>
+                </div>}
+                {salon.isDemoPreview && (
+                  <p className="mb-2 text-xs text-info-700">Illustrative listing, services, and availability.</p>
+                )}
 
                 {/* Location and Distance */}
                 <div className="flex items-center justify-between text-xs">

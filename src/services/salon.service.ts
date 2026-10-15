@@ -24,6 +24,8 @@ import {
 import { APPROVED_SALON_STATUS_FILTER, isSalonApproved } from '@/utils/salon-approval';
 import { buildActiveServiceSearchFilter } from '@/utils/service-search';
 import { canManageSalon } from '@/utils/salon-authorization';
+import { FEATURE22_DEMO_KEY_PREFIX } from '@/lib/feature22-demo-data';
+import { getSalonApplicationBlockers } from '@/utils/salon-application-readiness';
 
 export interface SalonWithOwner extends Omit<ISalon, 'owner'> {
   owner: AuthUser;
@@ -33,6 +35,7 @@ export interface PublicSalonDetails {
   _id: string;
   name: string;
   slug: string;
+  salonType?: ISalon['salonType'];
   description?: string;
   logo?: string;
   coverImage?: string;
@@ -40,11 +43,13 @@ export interface PublicSalonDetails {
   address: Partial<ISalon['address']>;
   location?: ISalon['location'];
   contact: Partial<ISalon['contact']>;
+  socialLinks: NonNullable<ISalon['socialLinks']>;
   openingHours: Partial<ISalon['openingHours']>;
   facilities: ISalon['facilities'];
   rating: number;
   reviewCount: number;
   isVerified: boolean;
+  isDemoPreview: boolean;
   services: Array<{
     _id: string;
     name: string;
@@ -58,6 +63,7 @@ export interface PublicSalonDetails {
   barbers: Array<{
     _id: string;
     name: string;
+    title?: string;
     slug: string;
     profileImage?: string;
     bio?: string;
@@ -73,6 +79,7 @@ interface PublicSalonRecord {
   _id: Types.ObjectId;
   name: string;
   slug: string;
+  salonType?: ISalon['salonType'] | null;
   description?: string | null;
   logo?: string | null;
   coverImage?: string | null;
@@ -80,11 +87,13 @@ interface PublicSalonRecord {
   address?: Partial<ISalon['address']>;
   location?: ISalon['location'];
   contact?: Partial<ISalon['contact']>;
+  socialLinks?: ISalon['socialLinks'];
   openingHours?: Partial<ISalon['openingHours']>;
   facilities?: ISalon['facilities'];
   rating: number;
   reviewCount: number;
   isVerified: boolean;
+  demoKey?: string;
 }
 
 interface PublicServiceRecord {
@@ -102,6 +111,7 @@ interface PublicBarberRecord {
   _id: Types.ObjectId;
   user: Types.ObjectId;
   name: string;
+  title?: string | null;
   slug: string;
   profileImage?: string | null;
   bio?: string | null;
@@ -110,6 +120,7 @@ interface PublicBarberRecord {
   services?: Types.ObjectId[];
   rating: number;
   reviewCount: number;
+  demoKey?: string;
 }
 
 function escapeRegex(value: string): string {
@@ -176,9 +187,11 @@ export async function createSalon(
   const salon = await Salon.create({
     name: input.name,
     slug,
+    salonType: input.salonType,
     description: input.description || '',
     logo: input.logo || null,
     coverImage: input.coverImage || null,
+    images: input.images || [],
     owner: ownerId,
     address: { ...input.address, city: supportedLocation.city, state: supportedLocation.state },
     location: input.location,
@@ -187,14 +200,54 @@ export async function createSalon(
       email: input.contact.email || null,
       website: input.contact.website || null,
     },
+    socialLinks: {
+      instagram: input.socialLinks?.instagram || null,
+      facebook: input.socialLinks?.facebook || null,
+      youtube: input.socialLinks?.youtube || null,
+    },
     openingHours: input.openingHours,
     facilities: input.facilities || [],
     isActive: false,
     isVerified: false,
-    approvalStatus: 'PENDING',
+    approvalStatus: 'DRAFT',
   });
 
   return salon;
+}
+
+export async function submitSalonApplication(currentUser: AuthUser): Promise<ISalon> {
+  await connectDB();
+  if (currentUser.role !== USER_ROLES.SALON_OWNER) {
+    throw new Error('SALON_ACCESS_DENIED: Salon owner access required');
+  }
+
+  const salon = await Salon.findOne({ owner: currentUser._id }).select('+aadhaarDocument +panDocument');
+  if (!salon) throw new Error('SALON_NOT_FOUND');
+  if (salon.approvalStatus !== 'DRAFT') {
+    throw new Error('SALON_APPLICATION_CONFLICT: This application is no longer a draft. Reload its current status.');
+  }
+
+  const [activeServiceCount, barberProfileCount] = await Promise.all([
+    Service.countDocuments({ salon: salon._id, isActive: true }),
+    Barber.countDocuments({ salon: salon._id }),
+  ]);
+  const blockers = getSalonApplicationBlockers({
+    activeServiceCount,
+    barberProfileCount,
+    hasAadhaarDocument: Boolean(salon.aadhaarDocument),
+    hasPanDocument: Boolean(salon.panDocument),
+  });
+  if (blockers.length) throw new Error(`SALON_APPLICATION_INCOMPLETE:${blockers.join('|')}`);
+
+  const submitted = await Salon.findOneAndUpdate(
+    { _id: salon._id, owner: currentUser._id, approvalStatus: 'DRAFT' },
+    { $set: { approvalStatus: 'PENDING' } },
+    { new: true, runValidators: true },
+  );
+  if (!submitted) {
+    throw new Error('SALON_APPLICATION_CONFLICT: This application changed while it was being submitted. Reload and try again.');
+  }
+  return submitted;
 }
 
 /**
@@ -244,7 +297,7 @@ export async function getPublicSalonDetails(identifier: string): Promise<PublicS
     approvalStatus: APPROVED_SALON_STATUS_FILTER,
     ...supportedLocation,
   })
-    .select('name slug description logo coverImage images address location contact openingHours facilities rating reviewCount isVerified')
+    .select('name slug salonType description logo coverImage images address location contact socialLinks openingHours facilities rating reviewCount isVerified +demoKey')
     .maxTimeMS(5000)
     .lean();
 
@@ -252,13 +305,20 @@ export async function getPublicSalonDetails(identifier: string): Promise<PublicS
 
   const [serviceRecords, barberRecords]: [PublicServiceRecord[], PublicBarberRecord[]] = await Promise.all([
     Service.find({ salon: salon._id, isActive: true })
-      .select('name description category duration price discountPrice image')
-      .sort({ name: 1 })
+      .select('name description category duration price discountPrice image displayOrder')
+      .sort({ displayOrder: 1, name: 1 })
       .limit(50)
       .maxTimeMS(5000)
       .lean(),
-    Barber.find({ salon: salon._id, isActive: true, isVerified: true })
-      .select('user name slug profileImage bio experienceYears specializations services rating reviewCount')
+    Barber.find({
+      salon: salon._id,
+      isActive: true,
+      $or: [
+        { user: null },
+        { user: { $ne: null }, isVerified: true },
+      ],
+    })
+      .select('user name title slug profileImage bio experienceYears specializations services rating reviewCount +demoKey')
       .sort({ name: 1 })
       .limit(50)
       .maxTimeMS(5000)
@@ -267,7 +327,7 @@ export async function getPublicSalonDetails(identifier: string): Promise<PublicS
 
   const activeUserIds = new Set(
     (await User.find({
-      _id: { $in: barberRecords.map((barber) => barber.user) },
+      _id: { $in: barberRecords.flatMap((barber) => barber.user ? [barber.user] : []) },
       isActive: true,
       role: USER_ROLES.BARBER,
     })
@@ -303,10 +363,11 @@ export async function getPublicSalonDetails(identifier: string): Promise<PublicS
   const servicesById = new Map(services.map((service) => [service._id, service]));
 
   const barbers = barberRecords
-    .filter((barber) => activeUserIds.has(barber.user.toString()))
+    .flatMap((barber) => !barber.user || activeUserIds.has(barber.user.toString()) ? [barber] : [])
     .map((barber) => ({
       _id: barber._id.toString(),
       name: barber.name,
+      title: barber.title || undefined,
       slug: barber.slug,
       profileImage: barber.profileImage || undefined,
       bio: barber.bio || undefined,
@@ -320,6 +381,7 @@ export async function getPublicSalonDetails(identifier: string): Promise<PublicS
       reviewCount: Number.isFinite(barber.reviewCount) && barber.reviewCount >= 0
         ? barber.reviewCount
         : 0,
+      isDemoPreview: barber.demoKey?.startsWith(FEATURE22_DEMO_KEY_PREFIX) ?? false,
       services: (barber.services ?? [])
         .map((serviceId) => servicesById.get(serviceId.toString()))
         .filter((service): service is NonNullable<typeof service> => Boolean(service))
@@ -330,6 +392,7 @@ export async function getPublicSalonDetails(identifier: string): Promise<PublicS
     _id: salon._id.toString(),
     name: salon.name,
     slug: salon.slug,
+    salonType: salon.salonType || undefined,
     description: salon.description || undefined,
     logo: salon.logo || undefined,
     coverImage: salon.coverImage || undefined,
@@ -337,11 +400,13 @@ export async function getPublicSalonDetails(identifier: string): Promise<PublicS
     address: salon.address ?? {},
     location: salon.location,
     contact: salon.contact ?? {},
+    socialLinks: salon.socialLinks ?? {},
     openingHours: salon.openingHours ?? {},
     facilities: salon.facilities ?? [],
     rating: Number.isFinite(salon.rating) && salon.rating >= 0 && salon.rating <= 5 ? salon.rating : 0,
     reviewCount: Number.isFinite(salon.reviewCount) && salon.reviewCount >= 0 ? salon.reviewCount : 0,
     isVerified: salon.isVerified,
+    isDemoPreview: salon.demoKey?.startsWith(FEATURE22_DEMO_KEY_PREFIX) ?? false,
     services,
     barbers,
   };
@@ -406,10 +471,18 @@ export async function updateSalon(
 
   // Update allowed fields
   if (input.name) salon.name = input.name;
+  if (input.salonType !== undefined) salon.salonType = input.salonType;
   if (input.description !== undefined) salon.description = input.description || '';
   if (input.logo !== undefined) salon.logo = input.logo || null;
   if (input.coverImage !== undefined) salon.coverImage = input.coverImage || null;
   if (input.images !== undefined) salon.images = input.images;
+  if (input.socialLinks) {
+    salon.socialLinks = {
+      instagram: input.socialLinks.instagram === undefined ? salon.socialLinks?.instagram ?? null : input.socialLinks.instagram || null,
+      facebook: input.socialLinks.facebook === undefined ? salon.socialLinks?.facebook ?? null : input.socialLinks.facebook || null,
+      youtube: input.socialLinks.youtube === undefined ? salon.socialLinks?.youtube ?? null : input.socialLinks.youtube || null,
+    };
+  }
 
   // Address update
   if (input.address) {
@@ -452,7 +525,7 @@ export async function updateSalon(
   if (isOwner && Object.keys(input).some((key) => key !== 'isActive')) {
     salon.isActive = false;
     salon.isVerified = false;
-    salon.approvalStatus = 'PENDING';
+    salon.approvalStatus = salon.approvalStatus === 'DRAFT' ? 'DRAFT' : 'PENDING';
     salon.rejectionReason = null;
     salon.approvalUpdatedAt = null;
     salon.approvalUpdatedBy = null;
@@ -621,7 +694,7 @@ export async function listSalons(options: {
   serviceSearch?: string;
   category?: string;
   sortBy?: string;
-}): Promise<{ salons: ISalon[]; total: number; page: number; limit: number }> {
+}): Promise<{ salons: Array<ISalon & { isDemoPreview?: boolean }>; total: number; page: number; limit: number }> {
   const page = Math.min(1000, Math.max(1, options.page || 1));
   const limit = Math.min(options.limit || 20, 50); // Max 50
   const publicListing = options.isActive !== false;
@@ -704,15 +777,23 @@ export async function listSalons(options: {
 
   // Fetch salons
   const salons = await Salon.find(query)
-    .select('name slug description logo coverImage images address.area address.city address.state rating reviewCount isVerified')
+    .select(`name slug description logo coverImage images address.area address.city address.state rating reviewCount isVerified${publicListing ? ' +demoKey' : ''}`)
     .sort(sortObj)
     .skip((page - 1) * limit)
     .limit(limit)
     .maxTimeMS(5000)
     .lean();
+  const listedSalons = publicListing
+    ? salons.map((salon) => {
+        const isDemoPreview = salon.demoKey?.startsWith(FEATURE22_DEMO_KEY_PREFIX) ?? false;
+        delete salon.demoKey;
+        salon.isDemoPreview = isDemoPreview;
+        return salon;
+      })
+    : salons;
 
   return {
-    salons,
+    salons: listedSalons,
     total,
     page,
     limit,

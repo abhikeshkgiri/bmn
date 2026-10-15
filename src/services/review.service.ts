@@ -3,7 +3,7 @@
  * Handles all review business logic with proper authorization and validation
  */
 
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import Review, { type IReview } from '@/models/Review';
 import Booking, { type IBooking } from '@/models/Booking';
 import Salon from '@/models/Salon';
@@ -26,6 +26,12 @@ import {
 } from '@/validations/review.schema';
 import { createNotification } from './notification.service';
 import { NOTIFICATION_TYPES } from '@/constants/notifications';
+import { isFeature22Booking } from '@/services/demo-booking-guard.service';
+import { isFeature22DemoRecord } from '@/utils/transaction-eligibility';
+import {
+  getPublishedReviewRatingStats,
+  refreshReviewRatingSummary,
+} from '@/services/review-rating-summary.service';
 
 export interface ReviewCreatePayload {
   bookingId: string;
@@ -72,6 +78,7 @@ export const REVIEW_ERRORS = {
   REVIEW_NOT_OWNED: { code: 'REVIEW_NOT_OWNED', message: 'You can only edit or delete your own reviews' },
   UNAUTHORIZED: { code: 'UNAUTHORIZED', message: 'Not authorized to perform this action' },
   TARGET_MISMATCH: { code: 'TARGET_MISMATCH', message: 'The review target must belong to the completed booking' },
+  DEMO_TRANSACTION_NOT_ALLOWED: { code: 'DEMO_TRANSACTION_NOT_ALLOWED', message: 'Demo listings cannot receive reviews' },
 } as const;
 
 /**
@@ -109,6 +116,7 @@ async function validateReviewRequest(
   if (booking.customer.toString() !== payload.currentUser._id) {
     throw REVIEW_ERRORS.BOOKING_NOT_OWNED;
   }
+  if (await isFeature22Booking(booking)) throw REVIEW_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
 
   // Verify booking is completed
   if (booking.status !== BOOKING_STATUS.COMPLETED) {
@@ -188,14 +196,17 @@ export async function createReview(payload: ReviewCreatePayload): Promise<IRevie
       _id: targetId,
       salon: booking.salon,
       isActive: true,
-      isVerified: true,
+      $or: [
+        { user: null },
+        { user: { $ne: null }, isVerified: true },
+      ],
     }).select('_id user').maxTimeMS(5000);
-    const barberUser = barber ? await User.findOne({
+    const barberUser = barber?.user ? await User.findOne({
       _id: barber.user,
       role: USER_ROLES.BARBER,
       isActive: true,
     }).select('_id').maxTimeMS(5000) : null;
-    if (!barber || !barberUser) throw REVIEW_ERRORS.TARGET_MISMATCH;
+    if (!barber || (barber.user && !barberUser)) throw REVIEW_ERRORS.TARGET_MISMATCH;
   } else if (payload.target === REVIEW_TARGET.SERVICE) {
     const service = await Service.findOne({
       _id: targetId,
@@ -217,25 +228,33 @@ export async function createReview(payload: ReviewCreatePayload): Promise<IRevie
   }
 
   // Create review
-  let review: IReview;
+  let review: IReview | null = null;
+  const session = await mongoose.startSession();
   try {
-    review = await Review.create({
-      customer: new Types.ObjectId(payload.currentUser._id),
-      booking: new Types.ObjectId(payload.bookingId),
-      salon: booking.salon,
-      barber: booking.barber,
-      service: booking.service,
-      target: payload.target,
-      rating: payload.rating,
-      review: payload.review?.trim() || undefined,
-      status: REVIEW_STATUS.PUBLISHED,
+    await session.withTransaction(async () => {
+      const [createdReview] = await Review.create([{
+        customer: new Types.ObjectId(payload.currentUser._id),
+        booking: new Types.ObjectId(payload.bookingId),
+        salon: booking.salon,
+        barber: booking.barber,
+        service: booking.service,
+        target: payload.target,
+        rating: payload.rating,
+        review: payload.review?.trim() || undefined,
+        status: REVIEW_STATUS.PUBLISHED,
+      }], { session });
+      review = createdReview;
+      await refreshReviewRatingSummary(createdReview, session);
     });
   } catch (error) {
     if (typeof error === 'object' && error !== null && 'code' in error && error.code === 11000) {
       throw REVIEW_ERRORS.DUPLICATE_REVIEW;
     }
     throw error;
+  } finally {
+    await session.endSession();
   }
+  if (!review) throw new Error('REVIEW_CREATION_FAILED');
 
   // Send notification to salon owner
   try {
@@ -286,22 +305,34 @@ export async function updateReview(payload: ReviewUpdatePayload): Promise<IRevie
   if (review.customer.toString() !== payload.currentUser._id) {
     throw REVIEW_ERRORS.REVIEW_NOT_OWNED;
   }
+  if (await isFeature22Booking(review)) throw REVIEW_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
 
-  // Validate new content if provided
-  if (payload.rating !== undefined || payload.review !== undefined) {
-    validateReviewContent(payload.rating ?? review.rating, payload.review ?? review.review ?? undefined);
+  const session = await mongoose.startSession();
+  let updatedReview: IReview | null = null;
+  try {
+    await session.withTransaction(async () => {
+      const currentReview = await Review.findById(payload.reviewId).session(session) as IReview | null;
+      if (!currentReview) throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
+      if (currentReview.customer.toString() !== payload.currentUser._id) {
+        throw REVIEW_ERRORS.REVIEW_NOT_OWNED;
+      }
+      if (await isFeature22Booking(currentReview, session)) {
+        throw REVIEW_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+      }
+      if (payload.rating !== undefined || payload.review !== undefined) {
+        validateReviewContent(payload.rating ?? currentReview.rating, payload.review ?? currentReview.review ?? undefined);
+      }
+      if (payload.rating !== undefined) currentReview.rating = payload.rating;
+      if (payload.review !== undefined) currentReview.review = payload.review?.trim() || undefined;
+      await currentReview.save({ session });
+      await refreshReviewRatingSummary(currentReview, session);
+      updatedReview = currentReview;
+    });
+  } finally {
+    await session.endSession();
   }
-
-  // Update fields
-  if (payload.rating !== undefined) {
-    review.rating = payload.rating;
-  }
-  if (payload.review !== undefined) {
-    review.review = payload.review?.trim() || undefined;
-  }
-
-  await review.save();
-  return review;
+  if (!updatedReview) throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
+  return updatedReview;
 }
 
 /**
@@ -322,8 +353,24 @@ export async function deleteReview(reviewId: string, currentUser: AuthUser): Pro
   if (review.customer.toString() !== currentUser._id) {
     throw REVIEW_ERRORS.REVIEW_NOT_OWNED;
   }
-
-  await Review.deleteOne({ _id: review._id });
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const currentReview = await Review.findById(review._id).session(session) as IReview | null;
+      if (!currentReview) throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
+      if (currentReview.customer.toString() !== currentUser._id) {
+        throw REVIEW_ERRORS.REVIEW_NOT_OWNED;
+      }
+      if (await isFeature22Booking(currentReview, session)) {
+        throw REVIEW_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+      }
+      const deleted = await Review.deleteOne({ _id: currentReview._id }, { session });
+      if (deleted.deletedCount !== 1) throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
+      await refreshReviewRatingSummary(currentReview, session);
+    });
+  } finally {
+    await session.endSession();
+  }
 }
 
 /**
@@ -346,12 +393,13 @@ export async function getSalonReviews(
   if (!parsedOptions.success) throw REVIEW_ERRORS.INVALID_INPUT;
   if (!ReviewIdSchema.safeParse(salonId).success) throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
   const salon = await Salon.findById(salonId)
-    .select('_id isActive isVerified approvalStatus address')
+    .select('_id isActive isVerified approvalStatus address +demoKey')
     .maxTimeMS(5000);
   if (!salon || !salon.isActive || !isSalonApproved(salon) ||
     !isSupportedSalonLocation(salon.address.city, salon.address.state)) {
     throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
   }
+  if (isFeature22DemoRecord(salon.demoKey)) throw REVIEW_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
 
   const { page, limit } = parsedOptions.data;
   const skip = (page - 1) * limit;
@@ -373,13 +421,7 @@ export async function getSalonReviews(
     .limit(limit)
     .maxTimeMS(5000)) as IReview[];
 
-  const ratingCounts = await Review.aggregate<{ _id: number; count: number }>([
-    { $match: query },
-    { $group: { _id: '$rating', count: { $sum: 1 } } },
-  ]).option({ maxTimeMS: 5000 });
-  const stats = calculateRatingStatsFromCounts(
-    ratingCounts.map(({ _id, count }) => ({ rating: _id, count }))
-  );
+  const stats = await getPublishedReviewRatingStats(new Types.ObjectId(salonId), REVIEW_TARGET.SALON);
 
   return {
     reviews,
@@ -410,19 +452,25 @@ export async function getBarberReviews(
   const barber = await Barber.findOne({
     _id: barberId,
     isActive: true,
-    isVerified: true,
-  }).select('_id user salon').maxTimeMS(5000);
-  const barberUser = barber ? await User.findOne({
+    $or: [
+      { user: null },
+      { user: { $ne: null }, isVerified: true },
+    ],
+  }).select('_id user salon +demoKey').maxTimeMS(5000);
+  const barberUser = barber?.user ? await User.findOne({
     _id: barber.user,
     role: USER_ROLES.BARBER,
     isActive: true,
   }).select('_id').maxTimeMS(5000) : null;
   const salon = barber ? await Salon.findById(barber.salon)
-    .select('_id isActive isVerified approvalStatus address')
+    .select('_id isActive isVerified approvalStatus address +demoKey')
     .maxTimeMS(5000) : null;
-  if (!barber || !barberUser || !salon || !salon.isActive || !isSalonApproved(salon) ||
+  if (!barber || (barber.user && !barberUser) || !salon || !salon.isActive || !isSalonApproved(salon) ||
     !isSupportedSalonLocation(salon.address.city, salon.address.state)) {
     throw REVIEW_ERRORS.REVIEW_NOT_FOUND;
+  }
+  if (isFeature22DemoRecord(barber.demoKey, salon.demoKey)) {
+    throw REVIEW_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
   }
 
   const { page, limit } = parsedOptions.data;
@@ -445,13 +493,7 @@ export async function getBarberReviews(
     .limit(limit)
     .maxTimeMS(5000)) as IReview[];
 
-  const ratingCounts = await Review.aggregate<{ _id: number; count: number }>([
-    { $match: query },
-    { $group: { _id: '$rating', count: { $sum: 1 } } },
-  ]).option({ maxTimeMS: 5000 });
-  const stats = calculateRatingStatsFromCounts(
-    ratingCounts.map(({ _id, count }) => ({ rating: _id, count }))
-  );
+  const stats = await getPublishedReviewRatingStats(new Types.ObjectId(barberId), REVIEW_TARGET.BARBER);
 
   return {
     reviews,
@@ -523,11 +565,11 @@ export async function getSalonRatingStats(salonId: string): Promise<RatingStats>
   await connectDB();
 
   if (!ReviewIdSchema.safeParse(salonId).success) throw REVIEW_ERRORS.INVALID_INPUT;
-  const ratingCounts = await Review.aggregate<{ _id: number; count: number }>([
-    { $match: { salon: new Types.ObjectId(salonId), target: REVIEW_TARGET.SALON, status: REVIEW_STATUS.PUBLISHED } },
-    { $group: { _id: '$rating', count: { $sum: 1 } } },
-  ]).option({ maxTimeMS: 5000 });
-  return calculateRatingStatsFromCounts(ratingCounts.map(({ _id, count }) => ({ rating: _id, count })));
+  const salon = await Salon.findById(salonId).select('+demoKey').maxTimeMS(5000);
+  if (!salon || isFeature22DemoRecord(salon.demoKey)) {
+    return calculateRatingStatsFromCounts([]);
+  }
+  return getPublishedReviewRatingStats(new Types.ObjectId(salonId), REVIEW_TARGET.SALON);
 }
 
 /**
@@ -537,11 +579,15 @@ export async function getBarberRatingStats(barberId: string): Promise<RatingStat
   await connectDB();
 
   if (!ReviewIdSchema.safeParse(barberId).success) throw REVIEW_ERRORS.INVALID_INPUT;
-  const ratingCounts = await Review.aggregate<{ _id: number; count: number }>([
-    { $match: { barber: new Types.ObjectId(barberId), target: REVIEW_TARGET.BARBER, status: REVIEW_STATUS.PUBLISHED } },
-    { $group: { _id: '$rating', count: { $sum: 1 } } },
-  ]).option({ maxTimeMS: 5000 });
-  return calculateRatingStatsFromCounts(ratingCounts.map(({ _id, count }) => ({ rating: _id, count })));
+  const barber = await Barber.findById(barberId).select('+demoKey').maxTimeMS(5000);
+  if (!barber || isFeature22DemoRecord(barber.demoKey)) {
+    return calculateRatingStatsFromCounts([]);
+  }
+  const salon = await Salon.findById(barber.salon).select('+demoKey').maxTimeMS(5000);
+  if (!salon || isFeature22DemoRecord(salon.demoKey)) {
+    return calculateRatingStatsFromCounts([]);
+  }
+  return getPublishedReviewRatingStats(new Types.ObjectId(barberId), REVIEW_TARGET.BARBER);
 }
 
 /**
@@ -554,7 +600,7 @@ export async function canReviewBooking(bookingId: string, customerId: string): P
     return false;
   }
   const booking = await Booking.findById(bookingId);
-  if (!booking || booking.customer.toString() !== customerId) {
+  if (!booking || booking.customer.toString() !== customerId || await isFeature22Booking(booking)) {
     return false;
   }
 
@@ -574,10 +620,14 @@ export async function getReview(reviewId: string): Promise<IReview | null> {
   await connectDB();
 
   if (!ReviewIdSchema.safeParse(reviewId).success) return null;
-  return (await Review.findById(reviewId)
-    .populate('customer', 'name avatar')
-    .populate({ path: 'booking', select: 'bookingNumber appointmentDate startTime endTime status' })
-    .populate({ path: 'salon', select: 'name slug' })
-    .populate({ path: 'barber', select: 'name slug profileImage' })
-    .populate({ path: 'service', select: 'name category' })) as IReview | null;
+  const review = await Review.findById(reviewId) as IReview | null;
+  if (review && await isFeature22Booking(review)) return null;
+  if (!review) return null;
+  return await review.populate([
+    { path: 'customer', select: 'name avatar' },
+    { path: 'booking', select: 'bookingNumber appointmentDate startTime endTime status' },
+    { path: 'salon', select: 'name slug' },
+    { path: 'barber', select: 'name slug profileImage' },
+    { path: 'service', select: 'name category' },
+  ]);
 }

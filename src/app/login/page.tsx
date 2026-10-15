@@ -24,6 +24,7 @@ import Badge from '@/components/ui/Badge';
 import { isValidIndianPhoneNumber } from '@/utils/phone';
 import RoleSelection from '@/components/auth/RoleSelection';
 import { USER_ROLES, type UserRole } from '@/constants/roles';
+import { getPostLoginPath } from '@/utils/dashboard-route';
 
 type LoginStepType = 'phone' | 'otp';
 type LoginAudience = 'customer' | 'salonOwner';
@@ -103,7 +104,9 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      const response = await fetch('/api/auth/send-otp', {
+      const response = await fetch(audience === 'salonOwner'
+        ? '/api/auth/send-salon-owner-otp'
+        : '/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
@@ -123,8 +126,8 @@ export default function LoginPage() {
       }
       setStep('otp');
       startResendCooldown();
-    } catch {
-      setError('An error occurred. Please try again.');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'An error occurred. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -157,29 +160,24 @@ export default function LoginPage() {
         return;
       }
 
+      const sessionResponse = await fetch('/api/auth/me');
+      const sessionResult = await sessionResponse.json();
+      if (!sessionResponse.ok || !sessionResult.success || !sessionResult.user?.role) {
+        throw new Error(sessionResult?.error?.message || 'The verified account session could not be loaded.');
+      }
+      const role = sessionResult.user.role as UserRole;
+      if (audience === 'salonOwner' && role === USER_ROLES.CUSTOMER) {
+        throw new Error('This mobile number belongs to a customer account, not a salon owner account. Use the customer login option or an authorized salon owner account.');
+      }
       setSuccess('Logged in successfully!');
-      const role = data?.user?.role as UserRole | undefined;
-      const defaultPath = role === USER_ROLES.BARBER
-        ? '/dashboard/barber'
-        : role === USER_ROLES.SALON_OWNER
-          ? '/salon/onboarding'
-          : role === USER_ROLES.ADMIN || role === USER_ROLES.SUPER_ADMIN
-            ? '/admin'
-            : '/dashboard';
       const requestedPath = new URLSearchParams(window.location.search).get('next');
-      const safeNext = requestedPath && requestedPath.startsWith('/') && !requestedPath.startsWith('//')
-        ? requestedPath
-        : null;
-      const nextIsBarberOnly = Boolean(safeNext?.startsWith('/dashboard/barber') || safeNext?.startsWith('/barber'));
-      const nextIsSalonOnly = Boolean(safeNext?.startsWith('/dashboard/salon') || safeNext?.startsWith('/salon'));
-      const nextIsAdminOnly = Boolean(safeNext?.startsWith('/admin'));
-      const nextAllowed =
-        (!nextIsBarberOnly || role === USER_ROLES.BARBER) &&
-        (!nextIsSalonOnly || role === USER_ROLES.SALON_OWNER || role === USER_ROLES.ADMIN || role === USER_ROLES.SUPER_ADMIN) &&
-        (!nextIsAdminOnly || role === USER_ROLES.ADMIN || role === USER_ROLES.SUPER_ADMIN);
-      router.replace(safeNext && nextAllowed ? safeNext : defaultPath);
-    } catch {
-      setError('An error occurred. Please try again.');
+      const destination = getPostLoginPath(role, requestedPath);
+      if (!destination) {
+        throw new Error('Salon staff dashboard access is not configured. Contact your salon administrator.');
+      }
+      router.replace(destination);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'An error occurred. Please try again.');
     } finally {
       setLoading(false);
     }

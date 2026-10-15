@@ -20,6 +20,7 @@ import {
 } from '../src/validations/payment.schema';
 import Payment from '../src/models/Payment';
 import WebhookEvent from '../src/models/WebhookEvent';
+import { isFeature22DemoRecord } from '../src/utils/transaction-eligibility';
 
 const orderId = 'order_abc123';
 const paymentId = 'pay_xyz789';
@@ -123,6 +124,10 @@ assert.equal(canTransitionPaymentToFailed('PAID'), false);
 assert.equal(isWebhookLeaseExpired(new Date(1000), new Date(1000)), true);
 assert.equal(isWebhookLeaseExpired(new Date(1001), new Date(1000)), false);
 assert.equal(isWebhookLeaseExpired(null, new Date(1000)), true);
+assert.equal(isFeature22DemoRecord('feature22:salon:demo'), true);
+assert.equal(isFeature22DemoRecord('feature22:barber:demo'), true);
+assert.equal(isFeature22DemoRecord('feature22:service:demo'), true);
+assert.equal(isFeature22DemoRecord('salon:ordinary', 'barber:ordinary', 'service:ordinary'), false);
 assert.equal(isRefundPending('REQUESTED'), true);
 assert.equal(isRefundPending('UNKNOWN'), true);
 assert.equal(isRefundPending(null), false);

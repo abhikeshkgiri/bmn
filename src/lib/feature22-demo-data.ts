@@ -1,8 +1,9 @@
-import { SUPPORTED_LAUNCH_CITIES } from '../src/constants/launch-cities';
-import { BARBER_SPECIALIZATION, SERVICE_CATEGORY } from '../src/constants/services';
+import { SUPPORTED_LAUNCH_CITIES } from '../constants/launch-cities';
+import { BARBER_SPECIALIZATION, SERVICE_CATEGORY } from '../constants/services';
+import { FEATURE22_DEMO_KEY_PREFIX } from '../utils/transaction-eligibility';
+export { FEATURE22_DEMO_KEY_PREFIX } from '../utils/transaction-eligibility';
 
 export const FEATURE22_DEMO_DATASET = 'feature22-demo-salons-v1';
-export const FEATURE22_DEMO_KEY_PREFIX = 'feature22:';
 export const DEMO_IMAGE_PATH = '/salon-placeholder.svg';
 
 export interface DemoSalonFixture {

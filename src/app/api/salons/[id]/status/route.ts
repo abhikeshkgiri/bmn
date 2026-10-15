@@ -9,6 +9,7 @@ import { requireAuth } from '@/lib/auth';
 import { activateSalon, deactivateSalon } from '@/services/salon.service';
 import { z } from 'zod';
 import { ZodError } from 'zod';
+import { revalidateHomeSalons } from '@/lib/home-salon-cache';
 
 const StatusSchema = z.object({
   isActive: z.boolean(),
@@ -42,6 +43,7 @@ export async function PATCH(
     const salon = validatedData.isActive
       ? await activateSalon(id, currentUser)
       : await deactivateSalon(id, currentUser);
+    revalidateHomeSalons();
 
     return NextResponse.json(
       {

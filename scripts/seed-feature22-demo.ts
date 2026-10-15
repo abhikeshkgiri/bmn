@@ -36,7 +36,7 @@ import {
   FEATURE22_DEMO_KEY_PREFIX,
   getFeature22DemoKeys,
   validateFeature22DemoData,
-} from './feature22-demo-data';
+} from '../src/lib/feature22-demo-data';
 
 type OperationMode = 'seed' | 'cleanup';
 
@@ -280,6 +280,7 @@ async function seedDemoData(databaseName: string): Promise<void> {
     const salonInput = SalonCreateSchema.parse({
       name: fixture.name,
       slug: fixture.slug,
+      salonType: 'BARBERSHOP',
       description: `Temporary demonstration listing for discovery and booking-flow testing. This is not an operating business; its address, staff and sample prices are illustrative. ${fixture.concept}.`,
       logo: '',
       coverImage: '',

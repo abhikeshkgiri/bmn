@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { updateReview, deleteReview } from '@/services/review.service';
 import { ReviewIdSchema, ReviewUpdateSchema } from '@/validations/review.schema';
+import { revalidateHomeSalons } from '@/lib/home-salon-cache';
 
 export async function PATCH(
   request: NextRequest,
@@ -51,6 +52,7 @@ export async function PATCH(
       ...parsed.data,
       currentUser,
     });
+    revalidateHomeSalons();
 
     return NextResponse.json(
       { success: true, data: updatedReview },
@@ -115,6 +117,7 @@ export async function DELETE(
     }
 
     await deleteReview(id, currentUser);
+    revalidateHomeSalons();
 
     return NextResponse.json(
       { success: true, message: 'Review deleted successfully' },

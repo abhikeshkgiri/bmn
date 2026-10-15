@@ -6,10 +6,14 @@ const httpUrl = z.string().url().refine(
   (value) => /^https?:\/\//i.test(value),
   'URL must use HTTP or HTTPS',
 );
-const optionalUrl = z.union([httpUrl, z.literal('')])
+const localImage = z.string().trim().refine((value) => value.startsWith('/uploads/') && value.slice('/uploads/'.length).split('/').every(
+  (segment) => segment.length > 0 && segment !== '.' && segment !== '..' && /^[a-zA-Z0-9._-]+$/.test(segment),
+));
+const imageReference = z.union([httpUrl, localImage]);
+const optionalUrl = z.union([imageReference, z.literal('')])
   .optional()
   .transform((value) => value || undefined);
-const optionalUrlUpdate = z.union([httpUrl, z.literal(''), z.null()])
+const optionalUrlUpdate = z.union([imageReference, z.literal(''), z.null()])
   .optional()
   .transform((value) => value === '' ? null : value);
 
@@ -17,7 +21,7 @@ const optionalUrlUpdate = z.union([httpUrl, z.literal(''), z.null()])
  * Portfolio item schema
  */
 export const PortfolioItemSchema = z.object({
-  image: httpUrl,
+  image: imageReference,
   title: z.string().trim().max(100).optional(),
   description: z.string().trim().max(500).optional(),
 }).strict();
@@ -28,8 +32,9 @@ export const PortfolioItemSchema = z.object({
  */
 export const BarberCreateSchema = z.object({
   salonId: objectId,
-  userId: objectId,
+  userId: objectId.optional(),
   name: z.string().trim().min(2, 'Name must be at least 2 characters').max(100, 'Name must not exceed 100 characters'),
+  title: z.string().trim().max(100).optional(),
   bio: z.string().trim().max(2000).optional(),
   profileImage: optionalUrl,
   experienceYears: z.number().min(0, 'Experience must be >= 0').max(60, 'Experience must be <= 60'),
@@ -46,6 +51,7 @@ export const BarberCreateSchema = z.object({
  */
 export const BarberUpdateSchema = z.object({
   name: z.string().trim().min(2, 'Name must be at least 2 characters').max(100, 'Name must not exceed 100 characters').optional(),
+  title: z.string().trim().max(100).optional(),
   bio: z.string().trim().max(2000).optional(),
   profileImage: optionalUrlUpdate,
   experienceYears: z.number().min(0, 'Experience must be >= 0').max(60, 'Experience must be <= 60').optional(),

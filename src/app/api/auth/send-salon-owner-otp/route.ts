@@ -4,6 +4,7 @@ import { requestOtp } from '@/services/auth.service';
 import { USER_ROLES } from '@/constants/roles';
 import { ZodError } from 'zod';
 import { getRequestIp, isRateLimited } from '@/lib/rate-limit';
+import { isDatabaseUnavailableError } from '@/lib/db-errors';
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,6 +28,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof ZodError) {
       return NextResponse.json({ success: false, error: 'Invalid input', details: error.issues }, { status: 400 });
+    }
+
+    if (isDatabaseUnavailableError(error)) {
+      return NextResponse.json({ success: false, error: 'Database unavailable; OTP was not issued.' }, { status: 503 });
     }
 
     if (error instanceof Error && error.message.includes('OTP_PROVIDER_NOT_CONFIGURED')) {

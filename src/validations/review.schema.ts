@@ -18,12 +18,12 @@ export const ReviewCreateSchema = z.object({
     REVIEW_TARGET.BARBER,
     REVIEW_TARGET.SERVICE,
   ]),
-});
+}).strict();
 
 export const ReviewUpdateSchema = z.object({
   rating: ratingSchema.optional(),
   review: reviewTextSchema.optional(),
-}).refine((input) => input.rating !== undefined || input.review !== undefined, {
+}).strict().refine((input) => input.rating !== undefined || input.review !== undefined, {
   message: 'Provide a rating or review text to update',
 });
 

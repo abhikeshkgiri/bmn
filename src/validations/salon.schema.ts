@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { SALON_FACILITY } from '@/constants/services';
+import { SALON_FACILITY, SALON_TYPE } from '@/constants/services';
 
 export const AddressSchema = z.object({
   addressLine1: z.string().trim().min(2).max(200),
@@ -61,25 +61,37 @@ const HttpUrlSchema = z.string().trim().max(2048).refine((value) => {
   }
 }, 'URL must use HTTP or HTTPS');
 
-const OptionalHttpUrlSchema = z.union([HttpUrlSchema, z.literal('')])
-  .optional()
-  .transform((value) => value || undefined);
+const OptionalHttpUrlSchema = z.union([HttpUrlSchema, z.literal('')]).optional();
+const LocalPublicImageSchema = z.string().trim().refine((value) => {
+  if (!value.startsWith('/uploads/')) return false;
+  return value.slice('/uploads/'.length).split('/').every(
+    (segment) => segment.length > 0 && segment !== '.' && segment !== '..' && /^[a-zA-Z0-9._-]+$/.test(segment),
+  );
+}, 'Image must be an uploaded salon image');
+const PublicImageSchema = z.union([HttpUrlSchema, LocalPublicImageSchema]);
+const OptionalPublicImageSchema = z.union([PublicImageSchema, z.literal('')]).optional();
 
 export const ContactSchema = z.object({
   phone: z.string().trim().regex(/^\+?[1-9]\d{9,14}$/),
-  email: z.union([z.string().trim().toLowerCase().email().max(160), z.literal('')])
-    .optional()
-    .transform((value) => value || undefined),
+  email: z.union([z.string().trim().toLowerCase().email().max(160), z.literal('')]).optional(),
   website: OptionalHttpUrlSchema,
+}).strict();
+
+export const SocialLinksSchema = z.object({
+  instagram: OptionalHttpUrlSchema,
+  facebook: OptionalHttpUrlSchema,
+  youtube: OptionalHttpUrlSchema,
 }).strict();
 
 export const SalonCreateSchema = z.object({
   name: z.string().trim().min(3).max(100),
   slug: z.string().trim().regex(/^[a-z0-9-]+$/),
+  salonType: z.enum(SALON_TYPE),
   description: z.string().trim().max(1000).optional(),
-  logo: OptionalHttpUrlSchema,
-  coverImage: OptionalHttpUrlSchema,
-  images: z.array(HttpUrlSchema).max(20).optional(),
+  logo: OptionalPublicImageSchema,
+  coverImage: OptionalPublicImageSchema,
+  images: z.array(PublicImageSchema).max(20).optional(),
+  socialLinks: SocialLinksSchema.optional(),
   address: AddressSchema,
   location: LocationSchema,
   contact: ContactSchema,
@@ -89,10 +101,12 @@ export const SalonCreateSchema = z.object({
 
 export const SalonUpdateSchema = z.object({
   name: z.string().trim().min(3).max(100).optional(),
+  salonType: z.enum(SALON_TYPE).optional(),
   description: z.string().trim().max(1000).optional(),
-  logo: OptionalHttpUrlSchema,
-  coverImage: OptionalHttpUrlSchema,
-  images: z.array(HttpUrlSchema).max(20).optional(),
+  logo: OptionalPublicImageSchema,
+  coverImage: OptionalPublicImageSchema,
+  images: z.array(PublicImageSchema).max(20).optional(),
+  socialLinks: SocialLinksSchema.partial().optional(),
   address: AddressSchema.partial().optional(),
   location: LocationSchema.optional(),
   contact: ContactSchema.partial().optional(),

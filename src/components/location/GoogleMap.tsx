@@ -23,6 +23,7 @@ export interface MapSalon {
     coordinates: [number, number];
   };
   rating: number;
+  isDemoPreview?: boolean;
   distance?: number;
 }
 
@@ -149,7 +150,7 @@ export default function GoogleMap({
       const marker = new (gmaps as any).Marker({
         position: { lat, lng },
         map: mapInstanceRef.current,
-        title: salon.name,
+        title: salon.isDemoPreview ? `Demo preview: ${salon.name}` : salon.name,
         icon: {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           path: (gmaps as any).SymbolPath.CIRCLE,
@@ -169,7 +170,12 @@ export default function GoogleMap({
             ${salonArea}
           </p>
           ${
-            salon.rating
+            salon.isDemoPreview
+              ? '<p style="margin: 4px 0; font-size: 12px; color: #9a3412; font-weight: 600;">Demo preview only · illustrative listing</p>'
+              : ''
+          }
+          ${
+            !salon.isDemoPreview && salon.rating
               ? `<p style="margin: 4px 0; font-size: 12px;">⭐ ${salon.rating.toFixed(1)}</p>`
               : ''
           }

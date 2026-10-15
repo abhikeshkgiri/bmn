@@ -8,6 +8,7 @@ import { SendOtpSchema } from '@/validations/auth.schema';
 import { requestOtp } from '@/services/auth.service';
 import { ZodError } from 'zod';
 import { getRequestIp, isRateLimited } from '@/lib/rate-limit';
+import { isDatabaseUnavailableError } from '@/lib/db-errors';
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,6 +61,13 @@ export async function POST(request: NextRequest) {
     }
 
     if (error instanceof Error) {
+      if (isDatabaseUnavailableError(error)) {
+        return NextResponse.json(
+          { success: false, error: 'Database unavailable; OTP was not issued.' },
+          { status: 503 }
+        );
+      }
+
       // Check for specific auth errors
       if (error.message.includes('OTP_PROVIDER_NOT_CONFIGURED')) {
         return NextResponse.json(

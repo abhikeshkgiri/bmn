@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getPublicSalonDetails, updateSalon, softDeleteSalon } from '@/services/salon.service';
+import { revalidateHomeSalons } from '@/lib/home-salon-cache';
 import { requireAuth } from '@/lib/auth';
 import { USER_ROLES } from '@/constants/roles';
 import { SalonOwnerUpdateSchema, SalonUpdateSchema } from '@/validations/salon.schema';
@@ -98,7 +99,7 @@ export async function PATCH(
 
     // Update salon
     const salon = await updateSalon(id, validatedData, currentUser);
-
+    revalidateHomeSalons();
     return NextResponse.json(
       {
         success: true,
@@ -214,7 +215,7 @@ export async function DELETE(
 
     // Soft delete (deactivate)
     const salon = await softDeleteSalon(id, currentUser);
-
+    revalidateHomeSalons();
     return NextResponse.json(
       {
         success: true,

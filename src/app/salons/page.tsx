@@ -36,6 +36,7 @@ interface Salon {
   distance?: number;
   isVerified: boolean;
   reviewCount: number;
+  isDemoPreview?: boolean;
 }
 
 interface PaginationData {
@@ -419,7 +420,11 @@ export default function SalonsPage() {
                         <h3 className="text-lg font-semibold text-foreground line-clamp-2">
                           {salon.name}
                         </h3>
-                        {salon.isVerified && (
+                        {salon.isDemoPreview ? (
+                          <Badge variant="info" className="ml-2 flex-shrink-0">
+                            Demo preview
+                          </Badge>
+                        ) : salon.isVerified && (
                           <Badge variant="success" className="ml-2 flex-shrink-0">
                             Verified
                           </Badge>
@@ -427,7 +432,7 @@ export default function SalonsPage() {
                       </div>
 
                       {/* Rating / reviews shown only when the model already has real ratings and review counts */}
-                      {salon.rating > 0 && (
+                      {!salon.isDemoPreview && salon.rating > 0 && (
                         <div className="flex items-center gap-2 mb-3">
                           <div className="flex items-center text-yellow-500">
                             <Star size={16} fill="currentColor" />

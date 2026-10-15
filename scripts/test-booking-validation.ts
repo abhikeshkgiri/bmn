@@ -8,10 +8,12 @@ import {
 } from '../src/utils/booking';
 import { buildAvailabilitySlots } from '../src/utils/booking-availability';
 import {
+  BookingStatusUpdateSchema,
   BookingCreateSchema,
   BookingListQuerySchema,
   BookingRescheduleSchema,
 } from '../src/validations/booking.schema';
+import { canConfirmPaidBooking, isFeature22DemoRecord } from '../src/utils/transaction-eligibility';
 
 const validBooking = {
   salonId: '64b000000000000000000001',
@@ -31,6 +33,12 @@ assert.equal(BookingCreateSchema.safeParse({ ...validBooking, appointmentDate: '
 assert.equal(BookingCreateSchema.safeParse({ ...validBooking, appointmentDate: '2026-10-11T00:00:00Z' }).success, false);
 assert.equal(BookingCreateSchema.safeParse({ ...validBooking, startTime: '24:00' }).success, false);
 assert.equal(BookingCreateSchema.safeParse({ ...validBooking, price: 1 }).success, false);
+assert.equal(BookingStatusUpdateSchema.safeParse({ status: BOOKING_STATUS.CONFIRMED }).success, true);
+assert.equal(BookingStatusUpdateSchema.safeParse({
+  status: BOOKING_STATUS.CONFIRMED,
+  paymentStatus: 'PAID',
+  amount: 1,
+}).success, false);
 assert.deepEqual(BookingListQuerySchema.parse({
   page: undefined,
   limit: undefined,
@@ -64,6 +72,53 @@ assert.equal(isTimeOverlap('09:00', '09:45', '09:30', '10:00'), true);
 assert.equal(isBookingStatusTransitionAllowed(BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED), true);
 assert.equal(isBookingStatusTransitionAllowed(BOOKING_STATUS.COMPLETED, BOOKING_STATUS.CANCELLED), false);
 assert.equal(isBookingStatusTransitionAllowed(BOOKING_STATUS.CANCELLED, BOOKING_STATUS.CONFIRMED), false);
+
+const paidConfirmation = {
+  bookingStatus: BOOKING_STATUS.PENDING,
+  bookingPaymentStatus: 'PAID',
+  paymentStatus: 'PAID',
+  providerPaymentId: 'pay_verified',
+  bookingAmount: 12500,
+  paymentAmount: 12500,
+  currency: 'INR',
+};
+assert.equal(canConfirmPaidBooking({
+  ...paidConfirmation,
+  holdExpiresAt: new Date(2000),
+}, new Date(1000)), true);
+assert.equal(canConfirmPaidBooking({
+  ...paidConfirmation,
+  bookingPaymentStatus: 'PENDING',
+  holdExpiresAt: new Date(2000),
+}, new Date(1000)), false);
+assert.equal(canConfirmPaidBooking({
+  ...paidConfirmation,
+  holdExpiresAt: new Date(1000),
+}, new Date(1000)), false);
+assert.equal(canConfirmPaidBooking({
+  ...paidConfirmation,
+  holdExpiresAt: null,
+}, new Date(1000)), false);
+assert.equal(canConfirmPaidBooking({
+  ...paidConfirmation,
+  providerPaymentId: undefined,
+  holdExpiresAt: new Date(2000),
+}, new Date(1000)), false);
+assert.equal(canConfirmPaidBooking({
+  ...paidConfirmation,
+  paymentAmount: 12499,
+  holdExpiresAt: new Date(2000),
+}, new Date(1000)), false);
+assert.equal(canConfirmPaidBooking({
+  ...paidConfirmation,
+  currency: 'USD',
+  holdExpiresAt: new Date(2000),
+}, new Date(1000)), false);
+
+for (const marker of ['feature22:salon:demo', 'feature22:barber:demo', 'feature22:service:demo']) {
+  assert.equal(isFeature22DemoRecord(marker), true);
+}
+assert.equal(isFeature22DemoRecord('ordinary-record-key'), false);
 
 const sameDay = new Date(2026, 9, 11);
 const slots = buildAvailabilitySlots({

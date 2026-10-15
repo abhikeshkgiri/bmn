@@ -7,6 +7,7 @@
 import Payment, { type IPayment } from '@/models/Payment';
 import { randomUUID } from 'node:crypto';
 import Booking, { type IBooking } from '@/models/Booking';
+import { isFeature22Booking } from '@/services/demo-booking-guard.service';
 import {
   isBookingHoldExpired,
 } from '@/utils/booking';
@@ -111,10 +112,16 @@ export const PAYMENT_ERRORS = {
     code: 'BOOKING_CANCELLED',
     message: 'Cannot process payment for cancelled booking',
   },
+  DEMO_TRANSACTION_NOT_ALLOWED: {
+    code: 'DEMO_TRANSACTION_NOT_ALLOWED',
+    message: 'Demo listings cannot participate in payments',
+  },
 };
 
 async function syncRefundStatusToBooking(payment: IPayment): Promise<void> {
   if (!payment.booking) return;
+  const booking = await Booking.findById(payment.booking);
+  if (!booking || await isFeature22Booking(booking)) return;
   await Booking.updateOne(
     {
       _id: payment.booking,
@@ -145,9 +152,7 @@ export async function createRazorpayOrder(
   }
 
   // Fetch booking
-  const booking = (await Booking.findById(bookingId)
-    .populate('service')
-    .lean()) as (IBooking & { service: Record<string, unknown> }) | null;
+  const booking = (await Booking.findById(bookingId).lean()) as IBooking | null;
 
   if (!booking) {
     throw PAYMENT_ERRORS.BOOKING_NOT_FOUND;
@@ -157,6 +162,7 @@ export async function createRazorpayOrder(
   if (booking.customer.toString() !== currentUser._id) {
     throw PAYMENT_ERRORS.FORBIDDEN;
   }
+  if (await isFeature22Booking(booking)) throw PAYMENT_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
 
   if (
     booking.status !== BOOKING_STATUS.PENDING ||
@@ -229,6 +235,9 @@ export async function createRazorpayOrder(
   });
 
   try {
+    if (await isFeature22Booking(booking)) {
+      throw PAYMENT_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+    }
     await reservation.save();
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 11000) {
@@ -352,6 +361,7 @@ export async function verifyRazorpayPayment(
   if (booking.customer.toString() !== currentUser._id) {
     throw PAYMENT_ERRORS.FORBIDDEN;
   }
+  if (await isFeature22Booking(booking)) throw PAYMENT_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
 
   const payment = (await Payment.findOne({
     booking: bookingId,
@@ -425,6 +435,9 @@ export async function verifyRazorpayPayment(
   try {
     await session.withTransaction(async () => {
       const currentBooking = await Booking.findById(bookingId).session(session);
+      if (currentBooking && await isFeature22Booking(currentBooking, session)) {
+        throw PAYMENT_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+      }
       const canConfirmBooking = currentBooking != null &&
         isBookingEligibleForCapturedPayment(
           currentBooking.status,
@@ -588,6 +601,7 @@ export async function recordPaymentFailure(
     if (payment.status === PAYMENT_STATUS.PAID) {
       throw PAYMENT_ERRORS.PAYMENT_ALREADY_COMPLETED;
     }
+    if (await isFeature22Booking(booking)) throw PAYMENT_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
     const update = await Payment.updateOne(
     {
       _id: payment._id,
@@ -637,6 +651,7 @@ export async function getPaymentByBooking(
   if (currentUser.role === 'CUSTOMER' && booking.customer.toString() !== currentUser._id) {
     throw PAYMENT_ERRORS.FORBIDDEN;
   }
+  if (await isFeature22Booking(booking)) throw PAYMENT_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
 
   // Fetch and return payment
   const payment = (await Payment.findOne({
@@ -656,18 +671,24 @@ export async function getPaymentById(
 ): Promise<IPayment | null> {
   await connectDB();
 
-  const payment = (await Payment.findById(paymentId)
-    .populate('booking')
-    .lean()) as (IPayment & { booking?: IBooking }) | null;
+  const payment = (await Payment.findById(paymentId).lean()) as IPayment | null;
 
   if (!payment) {
     throw PAYMENT_ERRORS.PAYMENT_NOT_FOUND;
   }
-
   if (currentUser.role !== 'CUSTOMER') {
     throw PAYMENT_ERRORS.UNAUTHORIZED;
   }
-  if (!payment.booking || (payment.booking as { customer?: { toString: () => string } }).customer?.toString() !== currentUser._id) {
+  if (payment.booking) {
+    const booking = await Booking.findById(payment.booking);
+    if (!booking || booking.customer.toString() !== currentUser._id) {
+      throw PAYMENT_ERRORS.FORBIDDEN;
+    }
+    if (await isFeature22Booking(booking)) {
+      throw PAYMENT_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+    }
+  }
+  if (!payment.booking) {
     throw PAYMENT_ERRORS.FORBIDDEN;
   }
 
@@ -697,6 +718,12 @@ export async function processRefund(
     payment.status !== PAYMENT_STATUS.PARTIALLY_REFUNDED
   ) {
     throw PAYMENT_ERRORS.INVALID_PAYMENT;
+  }
+  if (payment.booking) {
+    const booking = await Booking.findById(payment.booking);
+    if (booking && await isFeature22Booking(booking)) {
+      throw PAYMENT_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+    }
   }
 
   // Use full amount if not specified
@@ -1091,6 +1118,8 @@ export async function handleWebhookEvent(
               bookingId = storedPayment.booking.toString();
               if (!booking) {
                 reconciliationReason = 'BOOKING_MISSING';
+              } else if (await isFeature22Booking(booking, session)) {
+                reconciliationReason = 'DEMO_RECORD_PAYMENT';
               } else if (
                 booking.totalAmount !== storedPayment.amount ||
                 storedPayment.currency !== 'INR'

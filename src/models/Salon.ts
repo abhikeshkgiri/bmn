@@ -1,5 +1,5 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
-import { SALON_FACILITY, type SalonFacility } from '@/constants/services';
+import { SALON_FACILITY, SALON_TYPE, type SalonFacility, type SalonType } from '@/constants/services';
 
 interface IAddress {
   addressLine1: string;
@@ -31,10 +31,13 @@ interface ISalon extends Document {
   _id: Types.ObjectId;
   name: string;
   slug: string;
+  salonType?: SalonType;
   description?: string;
   logo?: string;
   coverImage?: string;
   images?: string[];
+  aadhaarDocument?: string;
+  panDocument?: string;
   owner: Types.ObjectId; // Reference to User (SALON_OWNER)
   staff?: Types.ObjectId[]; // References to Users (SALON_STAFF)
   barbers?: Types.ObjectId[]; // References to Barbers
@@ -46,6 +49,11 @@ interface ISalon extends Document {
     email?: string;
     website?: string;
   };
+  socialLinks?: {
+    instagram?: string | null;
+    facebook?: string | null;
+    youtube?: string | null;
+  };
   openingHours: IOpeningHours;
   capacity: number; // Maximum simultaneous bookings/appointments
   slotIntervalMinutes: number; // Booking slot interval (15, 30, 60 minutes)
@@ -55,11 +63,12 @@ interface ISalon extends Document {
   reviewCount: number;
   isVerified: boolean;
   isActive: boolean;
-  approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  approvalStatus?: 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED';
   rejectionReason?: string | null;
   approvalUpdatedAt?: Date | null;
   approvalUpdatedBy?: Types.ObjectId | null;
   demoKey?: string;
+  isDemoPreview?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -197,6 +206,11 @@ const SalonSchema = new Schema<ISalon>(
       trim: true,
       index: true,
     },
+    salonType: {
+      type: String,
+      enum: Object.values(SALON_TYPE),
+      default: null,
+    },
     description: {
       type: String,
       default: null,
@@ -212,6 +226,14 @@ const SalonSchema = new Schema<ISalon>(
     images: {
       type: [String],
       default: [],
+    },
+    aadhaarDocument: {
+      type: String,
+      select: false,
+    },
+    panDocument: {
+      type: String,
+      select: false,
     },
     owner: {
       type: Schema.Types.ObjectId,
@@ -262,6 +284,11 @@ const SalonSchema = new Schema<ISalon>(
         default: null,
       },
     },
+    socialLinks: {
+      instagram: { type: String, default: null },
+      facebook: { type: String, default: null },
+      youtube: { type: String, default: null },
+    },
     openingHours: {
       type: OpeningHoursSchema,
       required: true,
@@ -304,7 +331,7 @@ const SalonSchema = new Schema<ISalon>(
     },
     approvalStatus: {
       type: String,
-      enum: ['PENDING', 'APPROVED', 'REJECTED'],
+      enum: ['DRAFT', 'PENDING', 'APPROVED', 'REJECTED'],
       index: true,
     },
     rejectionReason: {

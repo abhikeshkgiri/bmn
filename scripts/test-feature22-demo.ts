@@ -12,7 +12,8 @@ import {
   DEMO_SERVICE_FIXTURES,
   getFeature22DemoKeys,
   validateFeature22DemoData,
-} from './feature22-demo-data';
+} from '../src/lib/feature22-demo-data';
+import { DEMO_REVIEWS } from '../src/lib/demo-reviews';
 
 assert.deepEqual(validateFeature22DemoData(), []);
 assert.equal(DEMO_SALONS.length, 20);
@@ -32,37 +33,48 @@ assert.equal(
   existsSync(path.join(process.cwd(), 'public', DEMO_IMAGE_PATH.slice(1))),
   true,
 );
+assert(DEMO_REVIEWS.every((review) =>
+  review.customer === 'Sample preview' &&
+  review.salon === 'Demo listing' &&
+  review.badge === 'Preview only' &&
+  review.review.includes('No customer review has been submitted'),
+));
 
 const validId = '64b000000000000000000000';
-const salon = DEMO_SALONS[0];
-const state = SUPPORTED_LAUNCH_CITIES.find(({ city }) => city === salon.city)?.state;
-assert(state);
-assert.doesNotThrow(() => SalonCreateSchema.parse({
-  name: salon.name,
-  slug: salon.slug,
-  description: `Demo listing. ${salon.concept}`,
-  address: {
-    addressLine1: salon.addressLine1,
-    area: salon.area,
-    landmark: salon.landmark,
-    city: salon.city,
-    state,
-    postalCode: salon.postalCode,
-    country: 'India',
-  },
-  location: { type: 'Point', coordinates: salon.coordinates },
-  contact: { phone: '+9993000001', email: 'hello.demo@example.com' },
-  openingHours: {
-    monday: { isOpen: true, openTime: '09:00', closeTime: '20:00' },
-    tuesday: { isOpen: true, openTime: '09:00', closeTime: '20:00' },
-    wednesday: { isOpen: true, openTime: '09:00', closeTime: '20:00' },
-    thursday: { isOpen: true, openTime: '09:00', closeTime: '20:00' },
-    friday: { isOpen: true, openTime: '10:00', closeTime: '21:00' },
-    saturday: { isOpen: true, openTime: '10:00', closeTime: '21:00' },
-    sunday: { isOpen: false },
-  },
-  facilities: [],
-}));
+for (const [index, salon] of DEMO_SALONS.entries()) {
+  const state = SUPPORTED_LAUNCH_CITIES.find(({ city }) => city === salon.city)?.state;
+  assert(state);
+  assert.doesNotThrow(() => SalonCreateSchema.parse({
+    name: salon.name,
+    slug: salon.slug,
+    salonType: 'BARBERSHOP',
+    description: `Temporary demonstration listing. ${salon.concept}`,
+    address: {
+      addressLine1: salon.addressLine1,
+      area: salon.area,
+      landmark: salon.landmark,
+      city: salon.city,
+      state,
+      postalCode: salon.postalCode,
+      country: 'India',
+    },
+    location: { type: 'Point', coordinates: salon.coordinates },
+    contact: {
+      phone: `+9993000${String(index + 1).padStart(3, '0')}`,
+      email: `hello.${salon.key}@example.com`,
+    },
+    openingHours: {
+      monday: { isOpen: true, openTime: '09:00', closeTime: '20:00' },
+      tuesday: { isOpen: true, openTime: '09:00', closeTime: '20:00' },
+      wednesday: { isOpen: true, openTime: '09:00', closeTime: '20:00' },
+      thursday: { isOpen: true, openTime: '09:00', closeTime: '20:00' },
+      friday: { isOpen: true, openTime: '10:00', closeTime: '21:00' },
+      saturday: { isOpen: true, openTime: '10:00', closeTime: '21:00' },
+      sunday: { isOpen: false },
+    },
+    facilities: [],
+  }));
+}
 for (const service of DEMO_SERVICE_FIXTURES) {
   assert.doesNotThrow(() => ServiceCreateSchema.parse({
     salonId: validId,

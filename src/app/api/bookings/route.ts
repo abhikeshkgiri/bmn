@@ -140,7 +140,6 @@ export async function GET(request: NextRequest) {
         { status: 403 }
       );
     }
-
     // Parse query parameters
     const searchParams = request.nextUrl.searchParams;
     const queryData = {
@@ -189,16 +188,20 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.error('Booking list error:', error);
+    const errorName = error instanceof Error ? error.name : 'UnknownError';
+    const databaseUnavailable = errorName === 'MongooseServerSelectionError' || errorName === 'MongoNetworkError';
+    console.error('Booking list error:', errorName);
     return NextResponse.json(
       {
         success: false,
         error: {
-          code: 'SERVER_ERROR',
-          message: 'Failed to fetch bookings',
+          code: databaseUnavailable ? 'DATABASE_UNAVAILABLE' : 'SERVER_ERROR',
+          message: databaseUnavailable
+            ? 'The database cannot be reached. Your bookings are temporarily unavailable.'
+            : 'Failed to fetch bookings',
         },
       },
-      { status: 500 }
+      { status: databaseUnavailable ? 503 : 500 }
     );
   }
 }

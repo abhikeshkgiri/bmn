@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
@@ -17,6 +17,7 @@ interface Salon {
   _id: string;
   name: string;
   slug: string;
+  isDemoPreview?: boolean;
 }
 
 interface Barber {
@@ -70,7 +71,7 @@ interface CreatedBooking {
   paymentStatus: string;
 }
 
-type BookingStep = 'service' | 'barber' | 'date' | 'time' | 'review' | 'confirmation' | 'payment';
+type BookingStep = 'service' | 'barber' | 'schedule' | 'review' | 'payment';
 
 function toDateInputValue(date: Date): string {
   const year = date.getFullYear();
@@ -92,7 +93,7 @@ export default function BookPage() {
   const [step, setStep] = useState<BookingStep>('service');
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [selectedBarber, setSelectedBarber] = useState<Barber | null>(null);
-  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedDate, setSelectedDate] = useState(() => toDateInputValue(new Date()));
   const [selectedTime, setSelectedTime] = useState('');
   const [customerNotes, setCustomerNotes] = useState('');
   const [couponCode, setCouponCode] = useState('');
@@ -102,9 +103,14 @@ export default function BookPage() {
 
   // Data lists
   const [services, setServices] = useState<Service[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(true);
+  const [serviceError, setServiceError] = useState('');
   const [barbers, setBarbers] = useState<Barber[]>([]);
+  const [barberLoading, setBarberLoading] = useState(false);
+  const [barberError, setBarberError] = useState('');
   const [availableSlots, setAvailableSlots] = useState<TimeSlot[]>([]);
   const [availabilityError, setAvailabilityError] = useState('');
+  const availabilityRequestId = useRef(0);
 
   // Loading states
   const [loading, setLoading] = useState(false);
@@ -123,26 +129,40 @@ export default function BookPage() {
   const [paymentBookingId, setPaymentBookingId] = useState<string | null>(null);
 
   const fetchServices = useCallback(async (salonId: string) => {
+    setServicesLoading(true);
+    setServiceError('');
     try {
       const response = await fetch(`/api/services?salonId=${salonId}&isActive=true`);
-      const result = await response.json() as {success: boolean; data?: Service[]};
-      if (result.success) {
-        setServices(result.data || []);
+      const result = await response.json() as {success: boolean; data?: Service[]; error?: { message?: string }};
+      if (!response.ok || !result.success) {
+        throw new Error(result.error?.message || 'Unable to load salon services.');
       }
+      setServices(result.data || []);
     } catch (error) {
       console.error('Failed to fetch services:', error);
+      setServices([]);
+      setServiceError(error instanceof Error ? error.message : 'Unable to load salon services.');
+    } finally {
+      setServicesLoading(false);
     }
   }, []);
 
-  const fetchBarbers = useCallback(async (salonId: string) => {
+  const fetchBarbers = useCallback(async (salonId: string, serviceId: string) => {
+    setBarberLoading(true);
+    setBarberError('');
     try {
-      const response = await fetch(`/api/barbers?salonId=${salonId}&isActive=true`);
-      const result = await response.json() as {success: boolean; data?: Barber[]};
-      if (result.success) {
-        setBarbers(result.data || []);
+      const response = await fetch(`/api/barbers?salonId=${encodeURIComponent(salonId)}&service=${encodeURIComponent(serviceId)}&isActive=true`);
+      const result = await response.json() as {success: boolean; data?: Barber[]; error?: { message?: string }};
+      if (!response.ok || !result.success) {
+        throw new Error(result.error?.message || 'Unable to load available barbers.');
       }
+      setBarbers(result.data || []);
     } catch (error) {
       console.error('Failed to fetch barbers:', error);
+      setBarbers([]);
+      setBarberError(error instanceof Error ? error.message : 'Unable to load available barbers.');
+    } finally {
+      setBarberLoading(false);
     }
   }, []);
 
@@ -157,7 +177,6 @@ export default function BookPage() {
           if (foundSalon) {
             setSalon(foundSalon);
             await fetchServices(foundSalon._id);
-            await fetchBarbers(foundSalon._id);
           }
         }
       } catch (error) {
@@ -189,54 +208,58 @@ export default function BookPage() {
 
     fetchSalon();
     fetchCustomerProfile();
-  }, [salonSlug, fetchServices, fetchBarbers]);
+  }, [salonSlug, fetchServices]);
 
-  const fetchAvailableSlots = async () => {
-    if (!salon || !selectedBarber || !selectedService || !selectedDate) return;
+  const fetchAvailableSlots = useCallback(async (
+    date = selectedDate,
+    barber = selectedBarber,
+    service = selectedService,
+  ) => {
+    if (!salon || !barber || !service || !date) return;
+    const requestId = ++availabilityRequestId.current;
 
     try {
       setLoading(true);
       setAvailabilityError('');
       setAvailableSlots([]);
-      setSelectedTime('');
       const response = await fetch(
-        `/api/bookings/availability?salonId=${salon._id}&barberId=${selectedBarber._id}&serviceId=${selectedService._id}&date=${selectedDate}`
+        `/api/bookings/availability?salonId=${encodeURIComponent(salon._id)}&barberId=${encodeURIComponent(barber._id)}&serviceId=${encodeURIComponent(service._id)}&date=${encodeURIComponent(date)}`
       );
       const result = await response.json() as {
         success?: boolean;
         data?: { slots?: TimeSlot[] };
         error?: { message?: string };
       };
+      if (requestId !== availabilityRequestId.current) return;
       if (response.ok && result.success && result.data) {
         setAvailableSlots(result.data.slots || []);
       } else {
         setAvailabilityError(result.error?.message || 'Availability could not be loaded.');
       }
     } catch (error) {
+      if (requestId !== availabilityRequestId.current) return;
       console.error('Failed to fetch available slots:', error);
       setAvailabilityError('Availability could not be loaded. Please retry.');
     } finally {
-      setLoading(false);
+      if (requestId === availabilityRequestId.current) setLoading(false);
     }
-  };
+  }, [salon, selectedBarber, selectedService, selectedDate]);
 
-  const handleServiceSelect = (service: Service) => {
+  const handleServiceSelect = async (service: Service) => {
+    if (servicesLoading) return;
     setSelectedService(service);
+    setSelectedBarber(null);
+    setSelectedTime('');
+    setAvailableSlots([]);
     setStep('barber');
+    if (salon) await fetchBarbers(salon._id, service._id);
   };
 
   const handleBarberSelect = (barber: Barber) => {
     setSelectedBarber(barber);
-    setStep('date');
-  };
-
-  const handleDateSelect = () => {
-    if (selectedDate) {
-      setSelectedTime('');
-      setAvailableSlots([]);
-      fetchAvailableSlots();
-      setStep('time');
-    }
+    setSelectedTime('');
+    setStep('schedule');
+    void fetchAvailableSlots(selectedDate, barber, selectedService);
   };
 
   const handleTimeSelect = (time: string) => {
@@ -253,13 +276,55 @@ export default function BookPage() {
         body: JSON.stringify({ salonId: salon._id, serviceId: selectedService._id, couponCode: couponCode.trim() || undefined, loyaltyPoints: loyaltyPoints || undefined }),
       });
       const result = await response.json() as { success: boolean; data?: CheckoutPrice; error?: { message?: string } };
-      if (!result.success || !result.data) { alert(result.error?.message || 'Unable to calculate checkout price'); return null; }
+      if (!response.ok || !result.success || !result.data) {
+        setBookingError(result.error?.message || 'Unable to calculate checkout price. Please retry.');
+        return null;
+      }
       setCheckoutPrice(result.data);
       return result.data;
-    } finally { setPriceLoading(false); }
+    } catch (error) {
+      console.error('Failed to calculate checkout price:', error);
+      setBookingError('Unable to calculate checkout price. Please retry.');
+      return null;
+    } finally {
+      setPriceLoading(false);
+    }
+  };
+
+  const preparePayment = async (booking: CreatedBooking) => {
+    setPaymentPreparing(true);
+    setBookingError('');
+    try {
+      const response = await fetch('/api/payments/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking._id }),
+      });
+      const result = await response.json() as {
+        success?: boolean;
+        data?: { orderId: string; amount: number; currency: string; keyId: string };
+        error?: { message?: string };
+      };
+      if (!response.ok || !result.success || !result.data) {
+        setBookingError(result.error?.message || 'Payment could not be prepared. Your booking request is saved; please retry.');
+        return;
+      }
+      setPaymentOrder({ ...result.data, bookingNumber: booking.bookingNumber });
+      setPaymentBookingId(booking._id);
+      setStep('payment');
+    } catch (error) {
+      console.error('Failed to prepare payment:', error);
+      setBookingError('Payment could not be prepared. Your booking request is saved; please retry.');
+    } finally {
+      setPaymentPreparing(false);
+    }
   };
 
   const handleBooking = async () => {
+    if (createdBooking) {
+      await preparePayment(createdBooking);
+      return;
+    }
     if (!salon || !selectedService || !selectedBarber || !selectedDate || !selectedTime) {
       setBookingError('Please complete all booking steps before continuing.');
       return;
@@ -300,45 +365,12 @@ export default function BookPage() {
       }
       setCreatedBooking(booking);
       setPaymentBookingId(booking._id);
-      setStep('confirmation');
+      await preparePayment(booking);
     } catch (error) {
       console.error('Failed to create booking:', error);
       setBookingError('Booking could not be created. Please check your connection and retry.');
     } finally {
       setBookingSubmitting(false);
-    }
-  };
-
-  const handleContinueToPayment = async () => {
-    if (!createdBooking) return;
-    try {
-      setPaymentPreparing(true);
-      setBookingError('');
-      const response = await fetch('/api/payments/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId: createdBooking._id }),
-      });
-      const result = await response.json() as {
-        success?: boolean;
-        data?: { orderId: string; amount: number; currency: string; keyId: string };
-        error?: { message?: string };
-      };
-
-      if (!response.ok || !result.success || !result.data) {
-        setBookingError(result.error?.message || 'Payment could not be prepared. Your booking request is still saved.');
-        return;
-      }
-      setPaymentOrder({
-        ...result.data,
-        bookingNumber: createdBooking.bookingNumber,
-      });
-      setStep('payment');
-    } catch (error) {
-      console.error('Failed to prepare payment:', error);
-      setBookingError('Payment could not be prepared. Your booking request is still saved.');
-    } finally {
-      setPaymentPreparing(false);
     }
   };
 
@@ -416,7 +448,7 @@ export default function BookPage() {
   }
 
   // Stepper UI
-  const steps: BookingStep[] = ['service', 'barber', 'date', 'time', 'review', 'confirmation', 'payment'];
+  const steps: BookingStep[] = ['service', 'barber', 'schedule', 'review', 'payment'];
   const minBookingDate = toDateInputValue(new Date());
   const maxBookingDate = (() => {
     const date = new Date();
@@ -426,10 +458,8 @@ export default function BookPage() {
   const stepLabels: Record<BookingStep, string> = {
     service: 'Service',
     barber: 'Barber',
-    date: 'Date',
-    time: 'Time',
+    schedule: 'Date & time',
     review: 'Review',
-    confirmation: 'Request created',
     payment: 'Payment',
   };
 
@@ -438,9 +468,16 @@ export default function BookPage() {
       <div className="max-w-4xl mx-auto px-4 py-12">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-foreground mb-2">Book Appointment</h1>
+          <h1 className="text-3xl font-bold text-foreground mb-2">
+            {salon.isDemoPreview ? 'Preview booking flow' : 'Book Appointment'}
+          </h1>
           <p className="text-foreground-secondary">{salon.name}</p>
         </div>
+        {salon.isDemoPreview && (
+          <p role="note" className="mb-6 rounded-xl border border-info-200 bg-info-50 p-4 text-sm text-info-700">
+            Demo preview only. This is not a real salon; services, prices, availability, and any booking/payment flow are illustrative test data.
+          </p>
+        )}
 
         {/* Stepper */}
         <Card className="p-6 mb-8">
@@ -448,12 +485,14 @@ export default function BookPage() {
             {steps.map((s, index) => (
               <div key={s} className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => {
                     const stepIndex = steps.indexOf(step);
-                    if (index < stepIndex) {
+                    if (!createdBooking && index < stepIndex) {
                       setStep(s);
                     }
                   }}
+                  disabled={Boolean(createdBooking) || index >= steps.indexOf(step)}
                   className={`w-10 h-10 rounded-full flex items-center justify-center font-medium transition-colors ${
                     step === s
                       ? 'bg-brand-pink text-white'
@@ -493,7 +532,14 @@ export default function BookPage() {
             {step === 'service' && (
               <div className="space-y-4">
                 <h2 className="text-2xl font-bold text-foreground mb-6">Select Service</h2>
-                {services.length === 0 ? (
+                {servicesLoading ? (
+                  <Card className="p-8 flex items-center justify-center"><Spinner size="md" /></Card>
+                ) : serviceError ? (
+                  <Card className="p-6 text-center">
+                    <p role="alert" className="text-sm text-red-700">{serviceError}</p>
+                    {salon && <Button className="mt-4" variant="outline" onClick={() => void fetchServices(salon._id)}>Retry</Button>}
+                  </Card>
+                ) : services.length === 0 ? (
                   <Card className="p-8 text-center">
                     <p className="text-foreground-secondary">No services available</p>
                   </Card>
@@ -506,6 +552,14 @@ export default function BookPage() {
                           ? 'border-2 border-brand-pink bg-background'
                           : 'hover:shadow-lg'
                       }`}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          void handleServiceSelect(service);
+                        }
+                      }}
                       onClick={() => handleServiceSelect(service)}
                     >
                       <div className="flex justify-between items-start">
@@ -530,10 +584,19 @@ export default function BookPage() {
             {/* BARBER SELECTION */}
             {step === 'barber' && (
               <div className="space-y-4">
-                <h2 className="text-2xl font-bold text-foreground mb-6">Select Barber</h2>
-                {barbers.length === 0 ? (
+                <h2 className="text-2xl font-bold text-foreground">Choose your barber</h2>
+                <p className="text-sm text-foreground-secondary">Pick a barber who offers {selectedService?.name}.</p>
+                {barberLoading ? (
+                  <Card className="p-8 flex items-center justify-center"><Spinner size="md" /></Card>
+                ) : barberError ? (
+                  <Card className="p-6 text-center">
+                    <p role="alert" className="text-sm text-red-700">{barberError}</p>
+                    {selectedService && salon && <Button className="mt-4" variant="outline" onClick={() => void fetchBarbers(salon._id, selectedService._id)}>Retry</Button>}
+                  </Card>
+                ) : barbers.length === 0 ? (
                   <Card className="p-8 text-center">
-                    <p className="text-foreground-secondary">No barbers available</p>
+                    <p className="font-medium text-foreground">No bookable barber for this service yet</p>
+                    <p className="mt-2 text-sm text-foreground-secondary">The salon owner needs to add an active barber profile that offers this service. Booking opens after salon approval.</p>
                   </Card>
                 ) : (
                   barbers.map((barber) => (
@@ -577,37 +640,25 @@ export default function BookPage() {
             )}
 
             {/* DATE SELECTION */}
-            {step === 'date' && (
+            {step === 'schedule' && (
               <div className="space-y-4">
-                <h2 className="text-2xl font-bold text-foreground mb-6">Select Date</h2>
+                <h2 className="text-2xl font-bold text-foreground">Choose date and time</h2>
+                <p className="text-sm text-foreground-secondary">Select a date to see live available times.</p>
                 <Input
                   type="date"
                   value={selectedDate}
                   onChange={(e) => {
-                    setSelectedDate(e.target.value);
+                    const date = e.target.value;
+                    setSelectedDate(date);
                     setSelectedTime('');
                     setAvailableSlots([]);
                     setAvailabilityError('');
+                    if (date) void fetchAvailableSlots(date);
                   }}
                   min={minBookingDate}
                   max={maxBookingDate}
                   className="w-full"
                 />
-                <Button
-                  variant="primary"
-                  onClick={handleDateSelect}
-                  disabled={!selectedDate}
-                  fullWidth
-                >
-                  View Available Times
-                </Button>
-              </div>
-            )}
-
-            {/* TIME SELECTION */}
-            {step === 'time' && (
-              <div className="space-y-4">
-                <h2 className="text-2xl font-bold text-foreground mb-6">Select Time Slot</h2>
                 {loading ? (
                   <Card className="p-8 flex items-center justify-center">
                     <Spinner size="md" />
@@ -615,13 +666,15 @@ export default function BookPage() {
                 ) : availabilityError ? (
                   <Card className="p-8 text-center">
                     <p role="alert" className="text-foreground-secondary mb-4">{availabilityError}</p>
-                    <Button variant="primary" onClick={() => void fetchAvailableSlots()}>Retry availability</Button>
+                    <Button variant="primary" onClick={() => void fetchAvailableSlots()}>Retry</Button>
                   </Card>
                 ) : availableSlots.length === 0 ? (
                   <Card className="p-8 text-center">
-                    <p className="text-foreground-secondary">No available slots for this date</p>
+                    <p className="text-foreground-secondary">No available times on this date. Try another date.</p>
                   </Card>
                 ) : (
+                  <>
+                  <h3 className="font-semibold text-foreground">Available times</h3>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     {availableSlots.map((slot) => (
                       <button
@@ -640,6 +693,7 @@ export default function BookPage() {
                       </button>
                     ))}
                   </div>
+                  </>
                 )}
               </div>
             )}
@@ -671,8 +725,9 @@ export default function BookPage() {
                   </div>
                 </Card>
 
-                <Card className="p-6 space-y-4">
-                  <h3 className="font-bold text-foreground">Checkout benefits</h3>
+                <details className="rounded-xl border border-border p-4">
+                  <summary className="cursor-pointer font-medium text-foreground">Have a coupon or want to use points?</summary>
+                  <div className="mt-4 space-y-3">
                   <Input value={couponCode} onChange={(e) => setCouponCode(e.target.value.toUpperCase())} placeholder="Coupon code" />
                   <Input type="number" min="0" value={loyaltyPoints || ''} onChange={(e) => setLoyaltyPoints(Math.max(0, Number(e.target.value) || 0))} placeholder="Loyalty points to redeem" />
                   <Button variant="secondary" onClick={() => void previewPrice()} disabled={priceLoading} fullWidth>
@@ -685,7 +740,8 @@ export default function BookPage() {
                     <div className="flex justify-between"><span>Loyalty</span><span>-{formatCurrency(checkoutPrice.loyaltyDiscount)}</span></div>
                     <div className="flex justify-between font-bold"><span>Final Amount</span><span>{formatCurrency(checkoutPrice.totalAmount)}</span></div>
                   </div>}
-                </Card>
+                  </div>
+                </details>
 
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-2">
@@ -703,68 +759,20 @@ export default function BookPage() {
                 <Button
                   variant="primary"
                   onClick={handleBooking}
-                  disabled={bookingSubmitting}
+                  disabled={bookingSubmitting || paymentPreparing}
                   fullWidth
                 >
-                  {bookingSubmitting ? 'Creating booking request...' : 'Create booking request'}
+                  {bookingSubmitting ? 'Securing your slot...' : paymentPreparing ? 'Preparing secure payment...' : createdBooking ? 'Retry payment' : `Continue to payment · ${formatCurrency(checkoutPrice?.totalAmount ?? selectedService?.price ?? 0)}`}
                 </Button>
+                {createdBooking && <p className="text-sm text-foreground-secondary">Your booking request {createdBooking.bookingNumber} is saved. Retry will continue payment for this request.</p>}
                 {bookingError && <p role="alert" className="text-sm text-red-700">{bookingError}</p>}
-              </div>
-            )}
-
-            {step === 'confirmation' && createdBooking && (
-              <div className="space-y-4">
-                <h2 className="text-2xl font-bold text-foreground">Booking request created</h2>
-                <Card className="p-6 space-y-4">
-                  <p className="text-sm text-foreground-secondary">
-                    Request {createdBooking.bookingNumber} was saved. This does not mean the salon has accepted it or that payment is complete.
-                  </p>
-                  <div>
-                    <p className="text-sm text-foreground-secondary">Salon</p>
-                    <p className="font-medium text-foreground">{createdBooking.salon.name}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-foreground-secondary">Service</p>
-                    <p className="font-medium text-foreground">
-                      {createdBooking.service.name} · {createdBooking.service.duration} minutes
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-foreground-secondary">Barber</p>
-                    <p className="font-medium text-foreground">{createdBooking.barber.name}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-foreground-secondary">Date and time</p>
-                    <p className="font-medium text-foreground">
-                      {new Date(createdBooking.appointmentDate).toLocaleDateString()} · {createdBooking.startTime}–{createdBooking.endTime}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-foreground-secondary">Price snapshot</p>
-                    <p className="font-bold text-brand-pink">{formatCurrency(createdBooking.totalAmount)}</p>
-                  </div>
-                  <p className="text-sm text-foreground-secondary">
-                    Booking status: {createdBooking.status}. Payment status: {createdBooking.paymentStatus}.
-                  </p>
-                </Card>
-                {bookingError && <p role="alert" className="text-sm text-red-700">{bookingError}</p>}
-                <Button
-                  variant="primary"
-                  onClick={handleContinueToPayment}
-                  disabled={paymentPreparing}
-                  fullWidth
-                >
-                  {paymentPreparing ? 'Preparing payment...' : 'Continue to payment'}
-                </Button>
-                <Button variant="ghost" onClick={() => router.push(`/booking/${createdBooking._id}`)} fullWidth>
-                  View booking details
-                </Button>
               </div>
             )}
 
             {step === 'payment' && paymentOrder && (
               <div className="space-y-4">
-                <h2 className="text-2xl font-bold text-foreground mb-6">Secure Payment</h2>
+                <h2 className="text-2xl font-bold text-foreground">Pay securely</h2>
+                {createdBooking && <p className="text-sm text-foreground-secondary">Booking {createdBooking.bookingNumber} · {createdBooking.service.name} · {formatCurrency(createdBooking.totalAmount)}</p>}
                 <Card className="p-6">
                   <RazorpayCheckout
                     orderId={paymentOrder.orderId}

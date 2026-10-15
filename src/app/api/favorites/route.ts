@@ -74,7 +74,7 @@ export async function GET() {
         : [],
       initialBarberDocs.length
         ? User.find({
-            _id: { $in: initialBarberDocs.map((barber) => barber.user) },
+            _id: { $in: initialBarberDocs.flatMap((barber) => barber.user ? [barber.user] : []) },
             role: USER_ROLES.BARBER,
             isActive: true,
           })
@@ -86,12 +86,13 @@ export async function GET() {
     const eligibleSalonIdSet = new Set(eligibleSalons.map((salon) => salon._id.toString()));
     const eligibleUserIdSet = new Set(activeBarberUsers.map((user) => user._id.toString()));
     const publicBarbers = new Map(
-      initialBarberDocs
-        .filter((barber) =>
-          eligibleSalonIdSet.has(barber.salon.toString()) &&
-          eligibleUserIdSet.has(barber.user.toString())
-        )
-        .map((barber) => [barber._id.toString(), barber]),
+      initialBarberDocs.flatMap((barber) =>
+        barber.user &&
+        eligibleSalonIdSet.has(barber.salon.toString()) &&
+        eligibleUserIdSet.has(barber.user.toString())
+          ? [[barber._id.toString(), barber] as const]
+          : [],
+      ),
     );
 
     return NextResponse.json({
@@ -180,7 +181,7 @@ export async function POST(request: NextRequest) {
 
       const [salon, barberUser] = await Promise.all([
         Salon.exists({ _id: barber.salon, ...publicSalonFilter() }).maxTimeMS(5000),
-        User.exists({ _id: barber.user, role: USER_ROLES.BARBER, isActive: true }).maxTimeMS(5000),
+        barber.user ? User.exists({ _id: barber.user, role: USER_ROLES.BARBER, isActive: true }).maxTimeMS(5000) : null,
       ]);
       if (!salon || !barberUser) {
         return NextResponse.json(

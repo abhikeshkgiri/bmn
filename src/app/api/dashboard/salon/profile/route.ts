@@ -5,6 +5,7 @@ import { USER_ROLES, type UserRole } from '@/constants/roles';
 import Salon, { type ISalon } from '@/models/Salon';
 import { updateSalon } from '@/services/salon.service';
 import { SalonOwnerUpdateSchema, SalonUpdateSchema } from '@/validations/salon.schema';
+import { revalidateHomeSalons } from '@/lib/home-salon-cache';
 
 const salonDashboardRoles: UserRole[] = [
   USER_ROLES.SALON_OWNER,
@@ -16,6 +17,7 @@ function serializeSalonProfile(salon: ISalon) {
   return {
     _id: salon._id.toString(),
     name: salon.name,
+    salonType: salon.salonType || '',
     description: salon.description || '',
     logo: salon.logo || '',
     coverImage: salon.coverImage || '',
@@ -23,6 +25,7 @@ function serializeSalonProfile(salon: ISalon) {
     address: salon.address,
     location: salon.location,
     contact: salon.contact,
+    socialLinks: salon.socialLinks || {},
     openingHours: salon.openingHours,
     facilities: salon.facilities || [],
     isActive: salon.isActive,
@@ -50,7 +53,7 @@ export async function GET() {
     }
 
     const salon = await Salon.findOne({ owner: currentUser._id }).select(
-      'name description logo coverImage images address location contact openingHours facilities isActive isVerified approvalStatus'
+      'name salonType description logo coverImage images address location contact socialLinks openingHours facilities isActive isVerified approvalStatus'
     );
     if (!salon) {
       return NextResponse.json(
@@ -101,6 +104,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     const updatedSalon = await updateSalon(salon._id.toString(), validated, currentUser);
+    revalidateHomeSalons();
     return NextResponse.json({
       success: true,
       data: serializeSalonProfile(updatedSalon),

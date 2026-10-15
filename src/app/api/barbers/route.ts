@@ -106,6 +106,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (message === 'BARBER_ACCOUNT_REQUIRED') {
+      return NextResponse.json(
+        { success: false, error: { code: message, message: 'An account is required to create an active barber profile.' } },
+        { status: 400 }
+      );
+    }
+
     // Service validation error
     if (message.includes('SERVICE_INVALID')) {
       return NextResponse.json(

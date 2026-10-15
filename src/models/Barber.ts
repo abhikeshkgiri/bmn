@@ -9,7 +9,7 @@ interface IPortfolioItem {
 
 interface IBarber extends Document {
   _id: Types.ObjectId;
-  user: Types.ObjectId; // Reference to User (BARBER role)
+  user: Types.ObjectId | null; // Null until the barber links an account
   salon: Types.ObjectId; // Reference to Salon
   name: string;
   slug: string;
@@ -30,6 +30,7 @@ interface IBarber extends Document {
   createdAt: Date;
   updatedAt: Date;
   demoKey?: string;
+  isDemoPreview?: boolean;
 }
 
 const PortfolioItemSchema = new Schema<IPortfolioItem>(
@@ -55,7 +56,7 @@ const BarberSchema = new Schema<IBarber>(
     user: {
       type: Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      default: null,
     },
     salon: {
       type: Schema.Types.ObjectId,

@@ -5,6 +5,8 @@ import Link from 'next/link';
 import Button from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Spinner } from '@/components/ui/Loading';
+import { USER_ROLES, type UserRole } from '@/constants/roles';
+import { getDashboardPathForRole } from '@/utils/dashboard-route';
 
 interface NotificationItem {
   _id: string;
@@ -22,8 +24,23 @@ export default function NotificationsPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [error, setError] = useState('');
+  const [dashboardPath, setDashboardPath] = useState<string | null>(null);
+  const [staffDashboardUnavailable, setStaffDashboardUnavailable] = useState(false);
 
   useEffect(() => {
+    const loadDashboardPath = async () => {
+      try {
+        const response = await fetch('/api/auth/me');
+        const result = await response.json();
+        if (!response.ok || !result.success || !result.user?.role) return;
+        const role = result.user.role as UserRole;
+        setDashboardPath(getDashboardPathForRole(role));
+        setStaffDashboardUnavailable(role === USER_ROLES.SALON_STAFF);
+      } catch {
+        setDashboardPath(null);
+      }
+    };
+
     const fetchInitialNotifications = async () => {
       try {
         setLoading(true);
@@ -54,6 +71,7 @@ export default function NotificationsPage() {
 
     const timer = window.setTimeout(() => {
       void fetchInitialNotifications();
+      void loadDashboardPath();
     }, 0);
 
     return () => window.clearTimeout(timer);
@@ -135,7 +153,8 @@ export default function NotificationsPage() {
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={markAllRead}>Mark all read</Button>
-            <Link href="/dashboard"><Button variant="primary" size="sm">Back to dashboard</Button></Link>
+            {dashboardPath && <Link href={dashboardPath}><Button variant="primary" size="sm">Back to dashboard</Button></Link>}
+            {staffDashboardUnavailable && <span className="text-sm text-amber-800">Staff dashboard access is not configured.</span>}
           </div>
         </div>
 

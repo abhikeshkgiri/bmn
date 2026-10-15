@@ -42,6 +42,13 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     );
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith('PRODUCTION_CONFIG_ERROR:')) {
+      return NextResponse.json(
+        { success: false, error: { code: 'PAYMENT_CONFIGURATION', message: 'Online payments are not configured yet. Please contact support or try again later.' } },
+        { status: 503 },
+      );
+    }
+
     // Handle validation errors
     if (error instanceof ZodError) {
       return NextResponse.json(

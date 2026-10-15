@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { createReview } from '@/services/review.service';
 import { ReviewCreateSchema } from '@/validations/review.schema';
+import { revalidateHomeSalons } from '@/lib/home-salon-cache';
 
 export async function POST(request: NextRequest) {
   try {
@@ -36,6 +37,7 @@ export async function POST(request: NextRequest) {
     }
 
     const createdReview = await createReview({ ...parsed.data, currentUser });
+    revalidateHomeSalons();
 
     return NextResponse.json(
       {

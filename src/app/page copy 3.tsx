@@ -521,11 +521,11 @@ export default function HomePage() {
 
         <section className="border-y border-border bg-neutral-50 py-14 md:py-20">
           <div className="mx-auto max-w-7xl px-4">
-            <SectionHeading align="center" eyebrow="Real feedback" title="What Customers Say" subtitle="Demo reviews are clearly marked as test/demo content and are used for development and QA." />
+            <SectionHeading align="center" eyebrow="Demo feedback" title="Preview feedback examples" subtitle="Placeholder copy for layout preview; no real customer reviews or ratings are shown here." />
             <div className="mt-10 grid gap-5 md:grid-cols-3">
               {reviews.slice(0, 3).map((review) => (
                 <div key={`${review.customer}-${review.salon}`} className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-                  <div className="mb-3 flex items-center gap-1 text-yellow-400">{Array.from({ length: review.rating }).map((_, index) => <Star key={`${review.customer}-${index}`} size={16} className="fill-current" />)}</div>
+                  <span className="inline-flex rounded-full bg-brand-pink/10 px-2.5 py-1 text-xs font-semibold text-brand-pink">Preview feedback · no real rating</span>
                   <p className="text-base text-brand-black">“{review.review}”</p>
                   <div className="mt-5 border-t border-border pt-4">
                     <p className="font-semibold text-brand-black">{review.customer}</p>

@@ -11,12 +11,15 @@ import Salon, { type ISalon } from '@/models/Salon';
 import Barber, { type IBarber } from '@/models/Barber';
 import Service, { type IService } from '@/models/Service';
 import User from '@/models/User';
+import Payment from '@/models/Payment';
 import Leave from '@/models/Leave';
 import { connectDB } from '@/lib/db';
 import type { AuthUser } from '@/types';
 import { BOOKING_STATUS, PAYMENT_STATUS, BOOKING_TYPE } from '@/constants/booking';
 import { USER_ROLES } from '@/constants/roles';
 import { isSalonApproved } from '@/utils/salon-approval';
+import { isFeature22DemoRecord, canConfirmPaidBooking } from '@/utils/transaction-eligibility';
+import { isFeature22Booking } from '@/services/demo-booking-guard.service';
 import {
   BOOKING_CANCELLATION_MINUTES,
   BOOKING_MAX_DAYS_AHEAD,
@@ -75,6 +78,7 @@ async function lockEligibleSalonForBooking(
 ): Promise<ISalon> {
   const eligibilityFilter = {
     _id: salonId,
+    demoKey: { $not: /^feature22:/ },
     isActive: true,
     isVerified: true,
     approvalStatus: { $in: ['APPROVED', null] },
@@ -91,6 +95,13 @@ async function lockEligibleSalonForBooking(
   if (!salon) throw BOOKING_ERRORS.INVALID_SALON;
   return salon;
 }
+
+const BOOKABLE_BARBER_PROFILE_FILTER = {
+  $or: [
+    { user: null },
+    { user: { $ne: null }, isVerified: true },
+  ],
+};
 
 /**
  * Error codes for booking operations
@@ -111,6 +122,7 @@ export const BOOKING_ERRORS = {
   BOOKING_NOT_FOUND: { code: 'BOOKING_NOT_FOUND', message: 'Booking not found' },
   CANNOT_CANCEL: { code: 'CANNOT_CANCEL', message: 'Cannot cancel booking within cancellation window' },
   INVALID_STATUS_TRANSITION: { code: 'INVALID_STATUS_TRANSITION', message: 'Invalid status transition' },
+  DEMO_TRANSACTION_NOT_ALLOWED: { code: 'DEMO_TRANSACTION_NOT_ALLOWED', message: 'Demo listings cannot be booked' },
 } as const;
 
 export type BookingError = (typeof BOOKING_ERRORS)[keyof typeof BOOKING_ERRORS];
@@ -182,7 +194,7 @@ async function validateBookingRequest(payload: BookingCreatePayload): Promise<{
   appointmentDate: Date;
 }> {
   // Validate salon
-  const salon = await Salon.findById(payload.salonId).select('+openingHours');
+  const salon = await Salon.findById(payload.salonId).select('+openingHours +demoKey');
   if (
     !salon ||
     !salon.isActive ||
@@ -192,18 +204,25 @@ async function validateBookingRequest(payload: BookingCreatePayload): Promise<{
   ) {
     throw BOOKING_ERRORS.INVALID_SALON;
   }
+  if (isFeature22DemoRecord(salon.demoKey)) throw BOOKING_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
 
   // Validate barber
-  const barber = await Barber.findById(payload.barberId).populate('salon');
-  if (!barber || !barber.isActive || !barber.isVerified || !barber.isAvailable) {
+  const barber = await Barber.findById(payload.barberId).select('+demoKey').populate('salon');
+  if (
+    !barber ||
+    !barber.isActive ||
+    !barber.isAvailable ||
+    (barber.user && !barber.isVerified)
+  ) {
     throw BOOKING_ERRORS.INVALID_BARBER;
   }
-  const barberAccount = await User.findOne({
+  if (isFeature22DemoRecord(barber.demoKey)) throw BOOKING_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+  const barberAccount = barber.user ? await User.findOne({
     _id: barber.user,
     role: USER_ROLES.BARBER,
     isActive: true,
-  }).select('_id');
-  if (!barberAccount) throw BOOKING_ERRORS.INVALID_BARBER;
+  }).select('_id') : null;
+  if (barber.user && !barberAccount) throw BOOKING_ERRORS.INVALID_BARBER;
 
   // Validate barber belongs to salon
   if (barber.salon._id.toString() !== payload.salonId) {
@@ -211,10 +230,11 @@ async function validateBookingRequest(payload: BookingCreatePayload): Promise<{
   }
 
   // Validate service
-  const service = await Service.findById(payload.serviceId);
+  const service = await Service.findById(payload.serviceId).select('+demoKey');
   if (!service || !service.isActive) {
     throw BOOKING_ERRORS.INVALID_SERVICE;
   }
+  if (isFeature22DemoRecord(service.demoKey)) throw BOOKING_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
 
   // Validate service belongs to salon
   if (service.salon.toString() !== payload.salonId) {
@@ -561,37 +581,39 @@ export async function createBooking(payload: BookingCreatePayload): Promise<IBoo
 
   try {
     await session.withTransaction(async () => {
-      await releaseExpiredBookingHolds(new Types.ObjectId(payload.salonId), session);
-
       const transactionSalon = await lockEligibleSalonForBooking(
         new Types.ObjectId(payload.salonId),
         session,
       );
+      await releaseExpiredBookingHolds(new Types.ObjectId(payload.salonId), session);
       const currentService = await Service.findOne({
         _id: service._id,
         salon: transactionSalon._id,
         isActive: true,
+        demoKey: { $not: /^feature22:/ },
       }).session(session);
       const currentBarber = await Barber.findOne({
         _id: new Types.ObjectId(payload.barberId),
         salon: transactionSalon._id,
         isActive: true,
-        isVerified: true,
         isAvailable: true,
         services: service._id,
+        demoKey: { $not: /^feature22:/ },
+        ...BOOKABLE_BARBER_PROFILE_FILTER,
       }).session(session);
-      const currentBarberUser = currentBarber ? await User.findOne({
+      const currentBarberUser = currentBarber?.user ? await User.findOne({
         _id: currentBarber.user,
         role: USER_ROLES.BARBER,
         isActive: true,
       }).session(session) : null;
       if (
+        isFeature22DemoRecord(transactionSalon.demoKey, currentBarber?.demoKey, currentService?.demoKey) ||
         !currentService ||
         currentService.duration !== service.duration ||
         currentService.price !== service.price ||
         currentService.discountPrice !== service.discountPrice ||
         !currentBarber ||
-        !currentBarberUser
+        (currentBarber.user && !currentBarberUser)
       ) {
         throw BOOKING_ERRORS.INVALID_SERVICE;
       }
@@ -739,18 +761,16 @@ export async function getAvailableSlots(
     _id: barberId,
     salon: salonId,
     isActive: true,
-    isVerified: true,
     isAvailable: true,
-  }).select('_id services');
-  if (!barber) {
-    throw BOOKING_ERRORS.INVALID_BARBER;
-  }
-  const barberAccount = await User.findOne({
+    ...BOOKABLE_BARBER_PROFILE_FILTER,
+  }).select('_id user services');
+  if (!barber) throw BOOKING_ERRORS.INVALID_BARBER;
+  const barberAccount = barber.user ? await User.findOne({
     _id: barber.user,
     role: USER_ROLES.BARBER,
     isActive: true,
-  }).select('_id');
-  if (!barberAccount) throw BOOKING_ERRORS.INVALID_BARBER;
+  }).select('_id') : null;
+  if (barber.user && !barberAccount) throw BOOKING_ERRORS.INVALID_BARBER;
 
   const service = await Service.findById(serviceId);
   if (!service || !service.isActive || service.salon.toString() !== salonId) {
@@ -1030,6 +1050,7 @@ export async function cancelBooking(
   if (booking.customer.toString() !== currentUser._id) {
     throw BOOKING_ERRORS.UNAUTHORIZED;
   }
+  if (await isFeature22Booking(booking)) throw BOOKING_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
   if (![BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED].includes(booking.status)) {
     throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
   }
@@ -1091,11 +1112,6 @@ export async function updateBookingStatus(
 ): Promise<IBooking> {
   await connectDB();
 
-  const booking = await Booking.findById(bookingId);
-  if (!booking) {
-    throw BOOKING_ERRORS.BOOKING_NOT_FOUND;
-  }
-
   const isAdmin = [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(currentUser.role as typeof USER_ROLES.ADMIN);
   const isSalonOwner = currentUser.role === USER_ROLES.SALON_OWNER;
   const isSalonStaff = currentUser.role === USER_ROLES.SALON_STAFF;
@@ -1105,43 +1121,91 @@ export async function updateBookingStatus(
     throw BOOKING_ERRORS.UNAUTHORIZED;
   }
 
-  if (isSalonOwner) {
-    const salon = await Salon.findOne({
-      _id: booking.salon,
-      owner: new Types.ObjectId(currentUser._id),
+  const session = await mongoose.startSession();
+  const transactionResult: { booking: IBooking | null } = { booking: null };
+  try {
+    await session.withTransaction(async () => {
+      const booking = await Booking.findById(bookingId).session(session);
+      if (!booking) throw BOOKING_ERRORS.BOOKING_NOT_FOUND;
+      if (await isFeature22Booking(booking, session)) {
+        throw BOOKING_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+      }
+
+      if (isSalonOwner) {
+        const salon = await Salon.findOne({
+          _id: booking.salon,
+          owner: new Types.ObjectId(currentUser._id),
+        }).session(session);
+        if (!salon) throw BOOKING_ERRORS.UNAUTHORIZED;
+      }
+
+      if (isSalonStaff) {
+        const salon = await Salon.findOne({
+          _id: booking.salon,
+          staff: new Types.ObjectId(currentUser._id),
+        }).session(session);
+        if (!salon) throw BOOKING_ERRORS.UNAUTHORIZED;
+      }
+
+      if (isBarber) {
+        const barber = await Barber.findOne({
+          _id: booking.barber,
+          user: new Types.ObjectId(currentUser._id),
+        }).session(session);
+        if (!barber) throw BOOKING_ERRORS.UNAUTHORIZED;
+      }
+
+      if (!isBookingStatusTransitionAllowed(booking.status, newStatus)) {
+        throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
+      }
+
+      if (newStatus === BOOKING_STATUS.CONFIRMED) {
+        // Serialize confirmation with payment/refund updates in this transaction.
+        const validatedPayment = await Payment.findOneAndUpdate(
+          {
+            booking: booking._id,
+            status: PAYMENT_STATUS.PAID,
+            providerPaymentId: { $type: 'string', $ne: '' },
+            refundRequestStatus: null,
+            refundRequestId: null,
+          },
+          { $set: { 'metadata.bookingConfirmationValidatedAt': new Date() } },
+          { new: true, session },
+        ).select('status providerPaymentId amount currency');
+        if (!validatedPayment || !canConfirmPaidBooking({
+          bookingStatus: booking.status,
+          bookingPaymentStatus: booking.paymentStatus,
+          paymentStatus: validatedPayment.status,
+          providerPaymentId: validatedPayment.providerPaymentId,
+          bookingAmount: booking.totalAmount,
+          paymentAmount: validatedPayment.amount,
+          currency: validatedPayment.currency,
+          holdExpiresAt: booking.holdExpiresAt,
+        })) {
+          throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
+        }
+      }
+
+      transactionResult.booking = await Booking.findOneAndUpdate(
+        {
+          _id: booking._id,
+          status: booking.status,
+          ...(newStatus === BOOKING_STATUS.CONFIRMED
+            ? {
+              paymentStatus: PAYMENT_STATUS.PAID,
+              holdExpiresAt: { $gt: new Date() },
+            }
+            : {}),
+        },
+        { $set: { status: newStatus } },
+        { new: true, runValidators: true, session },
+      );
+      if (!transactionResult.booking) throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
     });
-    if (!salon) {
-      throw BOOKING_ERRORS.UNAUTHORIZED;
-    }
+  } finally {
+    await session.endSession();
   }
-
-  if (isSalonStaff) {
-    const salon = await Salon.findOne({
-      _id: booking.salon,
-      staff: new Types.ObjectId(currentUser._id),
-    });
-    if (!salon) throw BOOKING_ERRORS.UNAUTHORIZED;
-  }
-
-  if (isBarber) {
-    const barber = await Barber.findOne({
-      _id: booking.barber,
-      user: new Types.ObjectId(currentUser._id),
-    });
-    if (!barber) {
-      throw BOOKING_ERRORS.UNAUTHORIZED;
-    }
-  }
-
-  if (!isBookingStatusTransitionAllowed(booking.status, newStatus)) {
-    throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
-  }
-
-  const updatedBooking = await Booking.findOneAndUpdate(
-    { _id: booking._id, status: booking.status },
-    { $set: { status: newStatus } },
-    { new: true, runValidators: true },
-  );
+  const updatedBooking = transactionResult.booking;
   if (!updatedBooking) throw BOOKING_ERRORS.INVALID_STATUS_TRANSITION;
 
   const populatedBooking = await updatedBooking.populate(['customer', 'salon', 'barber', 'service']);
@@ -1165,7 +1229,7 @@ export async function updateBookingStatus(
   }
 
   if (newStatus === BOOKING_STATUS.COMPLETED) {
-    await awardLoyaltyPoints(bookingId, booking.customer.toString(), booking.totalAmount);
+    await awardLoyaltyPoints(bookingId, updatedBooking.customer.toString(), updatedBooking.totalAmount);
   }
 
   void recordAuditEvent({
@@ -1232,15 +1296,16 @@ export async function rescheduleBooking(
   }
 
   // Get service (it might have changed, so always fetch fresh)
-  const service = await Service.findById(booking.service._id);
+  const service = await Service.findById(booking.service._id).select('+demoKey');
   if (!service || !service.isActive || service.salon.toString() !== booking.salon._id.toString()) {
     throw BOOKING_ERRORS.INVALID_SERVICE;
   }
+  if (isFeature22DemoRecord(service.demoKey)) throw BOOKING_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
   const salon = await Salon.findOne({
     _id: booking.salon._id,
     isActive: true,
     isVerified: true,
-  }).select('+openingHours capacity bookingLockVersion approvalStatus address');
+  }).select('+openingHours capacity bookingLockVersion approvalStatus address +demoKey');
   if (
     !salon ||
     !isSalonApproved(salon) ||
@@ -1248,19 +1313,21 @@ export async function rescheduleBooking(
   ) {
     throw BOOKING_ERRORS.INVALID_SALON;
   }
+  if (isFeature22DemoRecord(salon.demoKey)) throw BOOKING_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
   const barber = await Barber.findOne({
     _id: booking.barber._id,
     salon: salon._id,
     isActive: true,
-    isVerified: true,
     isAvailable: true,
-  }).select('user services');
-  const barberAccount = barber ? await User.findOne({
+    ...BOOKABLE_BARBER_PROFILE_FILTER,
+  }).select('user services +demoKey');
+  const barberAccount = barber?.user ? await User.findOne({
     _id: barber.user,
     role: USER_ROLES.BARBER,
     isActive: true,
   }).select('_id') : null;
-  if (!barber || !barberAccount) throw BOOKING_ERRORS.INVALID_BARBER;
+  if (!barber || (barber.user && !barberAccount)) throw BOOKING_ERRORS.INVALID_BARBER;
+  if (isFeature22DemoRecord(barber.demoKey)) throw BOOKING_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
   if (!barber.services?.some((id: Types.ObjectId) => id.toString() === service._id.toString())) {
     throw BOOKING_ERRORS.BARBER_DOES_NOT_OFFER_SERVICE;
   }
@@ -1307,6 +1374,9 @@ export async function rescheduleBooking(
       if (!currentBooking || currentBooking.customer.toString() !== currentUser._id) {
         throw BOOKING_ERRORS.UNAUTHORIZED;
       }
+      if (await isFeature22Booking(currentBooking, session)) {
+        throw BOOKING_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+      }
       if (
         ![BOOKING_STATUS.PENDING, BOOKING_STATUS.CONFIRMED].includes(currentBooking.status) ||
         (currentBooking.status === BOOKING_STATUS.PENDING && isBookingHoldExpired(currentBooking.holdExpiresAt))
@@ -1317,16 +1387,18 @@ export async function rescheduleBooking(
         _id: currentBooking.service,
         salon: transactionSalon._id,
         isActive: true,
+        demoKey: { $not: /^feature22:/ },
       }).session(session);
       const transactionBarber = await Barber.findOne({
         _id: currentBooking.barber,
         salon: transactionSalon._id,
         isActive: true,
-        isVerified: true,
         isAvailable: true,
         services: currentBooking.service,
+        demoKey: { $not: /^feature22:/ },
+        ...BOOKABLE_BARBER_PROFILE_FILTER,
       }).session(session);
-      const transactionBarberUser = transactionBarber ? await User.findOne({
+      const transactionBarberUser = transactionBarber?.user ? await User.findOne({
         _id: transactionBarber.user,
         role: USER_ROLES.BARBER,
         isActive: true,
@@ -1335,7 +1407,7 @@ export async function rescheduleBooking(
         !transactionService ||
         transactionService.duration !== service.duration ||
         !transactionBarber ||
-        !transactionBarberUser
+        (transactionBarber.user && !transactionBarberUser)
       ) {
         throw BOOKING_ERRORS.INVALID_SERVICE;
       }

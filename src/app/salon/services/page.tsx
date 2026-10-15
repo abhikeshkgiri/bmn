@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/Loading';
 import { formatCurrency } from '@/utils/currency';
 import { SERVICE_CATEGORY } from '@/constants/services';
 import { USER_ROLES } from '@/constants/roles';
+import SalonFileUpload from '@/components/salon/SalonFileUpload';
 import { Eye, EyeOff, Pencil, Plus } from 'lucide-react';
 
 interface Service {
@@ -20,6 +21,7 @@ interface Service {
   duration: number;
   price: number;
   discountPrice?: number;
+  displayOrder: number;
   isActive: boolean;
   createdAt: string;
   image?: string;
@@ -69,6 +71,7 @@ export default function SalonServicesPage() {
     price: '',
     discountPrice: '',
     image: '',
+    displayOrder: '0',
   });
 
   // Load only the authenticated owner's salon; public discovery omits pending salons.
@@ -123,7 +126,7 @@ export default function SalonServicesPage() {
         setLoading(true);
         setServicesError('');
         const response = await fetch(
-          `/api/services?salonId=${encodeURIComponent(selectedSalonId)}&limit=50&page=${page}`,
+          `/api/services?salonId=${encodeURIComponent(selectedSalonId)}&limit=50&page=${page}&sortBy=displayOrder`,
           { signal: controller.signal }
         );
         const result = await response.json();
@@ -164,6 +167,7 @@ export default function SalonServicesPage() {
           ? Math.round(Number(formData.discountPrice) * 100)
           : editingId ? null : undefined,
         image: formData.image.trim(),
+        displayOrder: Number(formData.displayOrder),
       };
 
       const response = await fetch(editingId ? `/api/services/${editingId}` : '/api/services', {
@@ -239,6 +243,7 @@ export default function SalonServicesPage() {
       price: '',
       discountPrice: '',
       image: '',
+      displayOrder: '0',
     });
     setEditingId(null);
   };
@@ -259,6 +264,7 @@ export default function SalonServicesPage() {
       price: (service.price / 100).toFixed(2),
       discountPrice: service.discountPrice == null ? '' : (service.discountPrice / 100).toFixed(2),
       image: service.image || '',
+      displayOrder: String(service.displayOrder ?? 0),
     });
     setFormError('');
     setNotice('');
@@ -377,6 +383,17 @@ export default function SalonServicesPage() {
                     onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">Display order</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="10000"
+                    step="1"
+                    value={formData.displayOrder}
+                    onChange={(e) => setFormData({ ...formData, displayOrder: e.target.value })}
+                  />
+                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-1">
@@ -407,12 +424,12 @@ export default function SalonServicesPage() {
                   />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-foreground mb-1">Image URL</label>
-                  <Input
-                    type="url"
-                    placeholder="https://"
-                    value={formData.image}
-                    onChange={(e) => setFormData({ ...formData, image: e.target.value })}
+                  <SalonFileUpload
+                    kind="service"
+                    label="Service image (JPG, PNG, WebP; max 8 MB)"
+                    accept="image/jpeg,image/png,image/webp"
+                    previewUrl={formData.image || undefined}
+                    onUploaded={(result) => { if (result.url) setFormData((current) => ({ ...current, image: result.url || '' })); }}
                   />
                 </div>
               </div>

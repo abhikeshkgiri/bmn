@@ -21,7 +21,8 @@ assert.equal(
 );
 assert.equal(FavoriteInputSchema.safeParse({ targetType: 'ADMIN', targetId: '64b000000000000000000000' }).success, false);
 assert.equal(FavoriteInputSchema.safeParse({ targetType: 'SALON', targetId: 'not-an-id' }).success, false);
-assert.equal(FavoriteInputSchema.safeParse({ targetType: 'SALON', targetId: '64b000000000000000000000', extra: true }).success, true);
+assert.equal(FavoriteInputSchema.safeParse({ targetType: 'SALON', targetId: '64b000000000000000000000', extra: true }).success, false);
+assert.equal(FavoriteInputSchema.safeParse({ targetType: 'SALON', targetId: '64b000000000000000000000', customer: 'another-customer' }).success, false);
 assert.equal(FavoriteIdSchema.safeParse('64b000000000000000000000').success, true);
 assert.equal(FavoriteIdSchema.safeParse('invalid').success, false);
 assert(

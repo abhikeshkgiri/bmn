@@ -112,10 +112,15 @@ export default function CustomerDashboard() {
         success: boolean;
         data?: Booking[];
         pagination?: { total: number };
+        error?: { message?: string };
       };
 
       if (!bookingsResponse.ok || !bookingsResult.success || !bookingsResult.data) {
-        throw new Error(bookingsResponse.status === 401 ? 'Please sign in to view your bookings.' : 'Unable to load your bookings.');
+        throw new Error(
+          bookingsResponse.status === 401
+            ? 'Please sign in to view your bookings.'
+            : bookingsResult.error?.message || 'Unable to load your bookings.'
+        );
       }
       {
         const now = new Date();

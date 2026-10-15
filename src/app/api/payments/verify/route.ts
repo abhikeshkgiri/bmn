@@ -62,6 +62,13 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     );
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith('PRODUCTION_CONFIG_ERROR:')) {
+      return NextResponse.json(
+        { success: false, error: { code: 'PAYMENT_CONFIGURATION', message: 'Payment verification is temporarily unavailable. Your payment may still be reconciled; please contact support before retrying.' } },
+        { status: 503 },
+      );
+    }
+
     // Handle validation errors
     if (error instanceof ZodError) {
       return NextResponse.json(

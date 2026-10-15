@@ -98,9 +98,18 @@ async function main() {
 
   const missingBarber = new Barber({});
   const missingBarberErrors = await validationErrors(missingBarber);
-  for (const field of ['user', 'salon', 'name', 'slug']) {
+  for (const field of ['salon', 'name', 'slug']) {
     assert.ok(missingBarberErrors[field], `Barber should require ${field}`);
   }
+  const profileOnlyBarber = new Barber({
+    ...fixtures.barbers[0].toObject(),
+    user: null,
+    isActive: true,
+    isVerified: false,
+  });
+  await profileOnlyBarber.validate();
+  assert.equal(profileOnlyBarber.isActive, true, 'salon-managed barber profiles can be active without a barber account');
+  assert.equal(profileOnlyBarber.isVerified, false, 'salon approval controls visibility of salon-managed profiles');
   const invalidBarber = new Barber({
     ...fixtures.barbers[0].toObject(),
     specializations: ['INVALID_SPECIALIZATION'],

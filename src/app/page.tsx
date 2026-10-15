@@ -10,15 +10,20 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Tag,
   XCircle,
 } from 'lucide-react';
 import Logo from '@/components/navbar/Logo';
 import { Navbar, NavbarBrand, NavbarMenu, NavbarMenuItem, NavbarActions } from '@/components/navbar/Navbar';
+import NavbarAccountActions from '@/components/navbar/NavbarAccountActions';
 import { Footer, FooterSection, FooterLink, FooterDivider, FooterBottom } from '@/components/footer/Footer';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
+import { Card, CardContent } from '@/components/ui/Card';
 import { SearchForm } from '@/components/search/SearchForm';
 import HomeSalonFeed from '@/components/home/HomeSalonFeed';
+import { getDemoOffers } from '@/lib/demo-offers';
+import { getDemoReviews } from '@/lib/demo-reviews';
 
 export const dynamic = 'force-dynamic';
 
@@ -135,14 +140,6 @@ function SectionHeading({
   );
 }
 
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="rounded-2xl border border-dashed border-border bg-neutral-50 p-8 text-center">
-      <p className="text-sm text-foreground-secondary">{message}</p>
-    </div>
-  );
-}
-
 /* -------------------------------------------------------------------------- */
 /*                                  Homepage                                  */
 /* -------------------------------------------------------------------------- */
@@ -164,16 +161,7 @@ export default function HomePage() {
           <NavbarMenuItem href="/salon">For Business</NavbarMenuItem>
         </NavbarMenu>
         <NavbarActions>
-          <Link href="/login">
-            <Button variant="outline" size="sm">
-              Login
-            </Button>
-          </Link>
-          <Link href="/signup">
-            <Button variant="primary" size="sm">
-              Sign Up
-            </Button>
-          </Link>
+          <NavbarAccountActions />
         </NavbarActions>
       </Navbar>
 
@@ -243,10 +231,10 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ----------------------------- Nearby Salons ---------------------------- */}
+        {/* ----------------------------- Featured Salons ---------------------------- */}
         <section className="mx-auto max-w-7xl px-4 py-14 md:py-20">
           <div className="mb-8 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-            <SectionHeading eyebrow="Near you" title="Salons Near You" />
+            <SectionHeading eyebrow="Top rated" title="Top 3 Salons" />
             <Link href="/salons" className="text-sm font-semibold text-brand-pink hover:underline">
               See all salons
             </Link>
@@ -309,12 +297,28 @@ export default function HomePage() {
             </Link>
           </div>
 
-          {/*
-            Offers must come from real active coupons in the database.
-            Render the offers grid here once a live coupon feed is connected.
-            Until then, show a clear, honest empty state — never fake discounts.
-          */}
-          <EmptyState message="No active offers right now. New deals from verified salons will appear here as soon as they go live." />
+          <p className="mb-5 text-sm text-foreground-secondary">
+            Sample coupons for preview only; they are not redeemable at checkout.
+          </p>
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+            {getDemoOffers().map((offer) => (
+              <Card key={offer.code} className="h-full overflow-hidden">
+                <CardContent className="p-5">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <Badge variant="pink"><Tag size={12} className="mr-1" />{offer.badge}</Badge>
+                    <span className="text-sm font-semibold text-brand-black">{offer.code}</span>
+                  </div>
+                  <h3 className="text-xl font-bold text-brand-black">{offer.title}</h3>
+                  <p className="mt-2 text-sm text-foreground-secondary">{offer.description}</p>
+                  <div className="mt-5 rounded-xl border border-brand-pink/20 bg-brand-pink/5 p-3">
+                    <p className="text-xs uppercase tracking-wide text-foreground-secondary">Demo discount</p>
+                    <p className="mt-1 text-2xl font-bold text-brand-pink">{offer.discountText}</p>
+                  </div>
+                  <p className="mt-4 text-xs text-foreground-muted">Sample only · not valid for payment</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </section>
 
         {/* ---------------------------- Customer Reviews -------------------------- */}
@@ -322,17 +326,28 @@ export default function HomePage() {
           <div className="mx-auto max-w-7xl px-4">
             <SectionHeading
               align="center"
-              eyebrow="Real feedback"
-              title="What Customers Say"
-              subtitle="Reviews come from real, verified bookings only."
+              eyebrow="Demo feedback"
+              title="Preview feedback examples"
+              subtitle="Placeholder copy for layout preview; no real customer reviews or ratings are shown here."
             />
 
-            <div className="mt-10">
-              {/*
-                Render verified booking reviews from the database here.
-                Only show reviews tied to a completed booking. No fake testimonials.
-              */}
-              <EmptyState message="Verified reviews will show here once customers complete their first bookings." />
+            <p className="mt-4 text-center text-sm text-foreground-secondary">
+              Demo placeholder content for layout testing only — not customer feedback or testimonials.
+            </p>
+            <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+              {getDemoReviews().map((review) => (
+                <Card key={`${review.customer}-${review.salon}`} className="h-full">
+                  <CardContent className="p-6">
+                    <Badge variant="info">Preview feedback · no real rating</Badge>
+                    <p className="mt-4 text-foreground-secondary">“{review.review}”</p>
+                    <div className="mt-5 border-t border-border pt-4">
+                      <p className="font-semibold text-brand-black">{review.customer}</p>
+                      <p className="text-sm text-foreground-secondary">{review.salon} · {review.city}</p>
+                      <Badge variant="info" className="mt-3">{review.badge}</Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
           </div>
         </section>

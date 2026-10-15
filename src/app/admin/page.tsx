@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
+import { getDashboardPathForRole } from '@/utils/dashboard-route';
 
 interface AdminBooking { _id: string; status: string; customer?: { name?: string }; salon?: { name?: string }; service?: { name?: string } }
 interface AdminRecentUser { _id: string; name: string; role: string; isActive: boolean }
@@ -36,7 +37,13 @@ export default function AdminDashboardPage() {
       const me = await fetch('/api/auth/me');
       const user = me.ok ? (await me.json()).user : null;
       if (!user || !['ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-        router.replace('/dashboard');
+        if (!user) {
+          router.replace('/login?next=%2Fadmin');
+        } else {
+          const dashboardPath = getDashboardPathForRole(user.role);
+          if (dashboardPath) router.replace(dashboardPath);
+          else setError('Salon staff dashboard access is not configured. Contact your salon administrator.');
+        }
         return;
       }
       const res = await fetch('/api/admin/dashboard');
@@ -54,7 +61,8 @@ export default function AdminDashboardPage() {
   }, [router]);
 
   useEffect(() => {
-    void load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   if (loading) return <div className="rounded-2xl border border-neutral-200 bg-white p-8 text-sm text-neutral-600">Loading admin dashboard…</div>;

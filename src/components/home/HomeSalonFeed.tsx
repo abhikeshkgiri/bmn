@@ -1,43 +1,31 @@
-'use client';
-
-import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { unstable_cache } from 'next/cache';
 import { MapPin, Scissors, Star } from 'lucide-react';
-import { getSupportedLaunchCity } from '@/constants/launch-cities';
-import ComingSoonLocation from '@/components/location/ComingSoonLocation';
-import SupportedCitySelect from '@/components/location/SupportedCitySelect';
+import { listSalons } from '@/services/salon.service';
 import Button from '@/components/ui/Button';
+import Badge from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
+import { HOME_SALON_CACHE_TAG } from '@/lib/home-salon-cache';
 
-const DEFAULT_LOCATION = 'Delhi';
-
-interface SalonAddress {
-  city?: string;
-  area?: string;
-  state?: string;
-}
-
-interface HomeSalon {
-  _id: string;
-  name: string;
-  slug: string;
-  rating?: number;
-  reviewCount?: number;
-  imageUrl?: string | null;
-  address?: SalonAddress;
-}
-
-interface ApiHomeSalon extends Omit<HomeSalon, 'imageUrl'> {
-  logo?: string | null;
-  coverImage?: string | null;
-  images?: string[];
-}
-
-function normalizeCity(value: string | null | undefined): string {
-  const cleaned = value?.trim();
-  if (!cleaned) return DEFAULT_LOCATION;
-  return getSupportedLaunchCity(cleaned)?.city || cleaned;
-}
+const getTopSalons = unstable_cache(
+  async () => {
+    const result = await listSalons({ limit: 3, sortBy: 'rating', isActive: true });
+    return result.salons.slice(0, 3).map((salon) => ({
+      _id: salon._id.toString(),
+      name: salon.name,
+      slug: salon.slug,
+      description: salon.description || undefined,
+      rating: Number.isFinite(salon.rating) ? salon.rating : 0,
+      reviewCount: Number.isFinite(salon.reviewCount) ? salon.reviewCount : 0,
+      isDemoPreview: salon.isDemoPreview ?? false,
+      imageUrl: salon.coverImage || salon.images?.[0] || salon.logo || null,
+      area: salon.address?.area,
+      city: salon.address?.city,
+    }));
+  },
+  ['homepage-top-salons'],
+  { revalidate: 300, tags: [HOME_SALON_CACHE_TAG] },
+);
 
 function EmptyState({ message }: { message: string }) {
   return (
@@ -47,7 +35,20 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
-function SalonCard({ salon }: { salon: HomeSalon }) {
+function SalonCard({ salon }: {
+  salon: {
+    _id: string;
+    name: string;
+    slug: string;
+    description?: string;
+    rating: number;
+    reviewCount: number;
+    isDemoPreview: boolean;
+    imageUrl: string | null;
+    area?: string;
+    city?: string;
+  };
+}) {
   return (
     <Card className="group flex h-full flex-col overflow-hidden transition-shadow hover:shadow-bookmynai-lg">
       <div className="relative aspect-[16/10] w-full overflow-hidden bg-gradient-to-br from-brand-pink/15 via-neutral-100 to-white">
@@ -70,27 +71,36 @@ function SalonCard({ salon }: { salon: HomeSalon }) {
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="font-semibold text-brand-black">{salon.name}</h3>
+            {salon.isDemoPreview && <Badge variant="info" className="mt-1">Demo preview</Badge>}
             <p className="flex items-center gap-1 text-sm text-foreground-secondary">
               <MapPin size={13} className="text-brand-pink" />
-              {salon.address?.area || salon.address?.city || 'Nearby'}
+              {salon.area || salon.city || 'BookMyNai'}
             </p>
           </div>
-          {typeof salon.rating === 'number' && salon.rating > 0 ? (
+          {!salon.isDemoPreview && salon.rating > 0 ? (
             <div className="flex items-center gap-1 rounded-lg bg-neutral-50 px-2 py-1 text-sm font-semibold text-brand-black">
               <Star size={13} className="fill-yellow-400 text-yellow-400" />
-              {salon.rating}
+              {salon.rating.toFixed(1)}
             </div>
           ) : null}
         </div>
-        {typeof salon.reviewCount === 'number' && salon.reviewCount > 0 ? (
+        {!salon.isDemoPreview && salon.reviewCount > 0 ? (
           <p className="text-sm text-foreground-secondary">{salon.reviewCount} reviews</p>
         ) : null}
+        {salon.description ? <p className="line-clamp-2 text-sm text-foreground-secondary">{salon.description}</p> : null}
+        {salon.isDemoPreview && (
+          <p className="text-xs text-info-700">
+            Illustrative business, services, prices, and availability; not a real salon.
+          </p>
+        )}
         <div className="mt-auto grid grid-cols-2 gap-2 pt-1">
           <Link href={`/salons/${salon.slug}`}>
             <Button variant="outline" size="sm" className="w-full">View Salon</Button>
           </Link>
           <Link href={`/salons/${salon.slug}?book=1`}>
-            <Button variant="primary" size="sm" className="w-full">Book Now</Button>
+            <Button variant="primary" size="sm" className="w-full">
+              {salon.isDemoPreview ? 'Preview booking flow' : 'Book Now'}
+            </Button>
           </Link>
         </div>
       </CardContent>
@@ -98,109 +108,33 @@ function SalonCard({ salon }: { salon: HomeSalon }) {
   );
 }
 
-export default function HomeSalonFeed() {
-  const [selectedLocation, setSelectedLocation] = useState(DEFAULT_LOCATION);
-  const [salons, setSalons] = useState<HomeSalon[]>([]);
-  const [loadingSalons, setLoadingSalons] = useState(true);
-  const [salonLoadError, setSalonLoadError] = useState(false);
-  const locationRequestId = useRef(0);
+export default async function HomeSalonFeed() {
+  let salons: Array<{
+    _id: string;
+    name: string;
+    slug: string;
+    description?: string;
+    rating: number;
+    reviewCount: number;
+    isDemoPreview: boolean;
+    imageUrl: string | null;
+    area?: string;
+    city?: string;
+  }> = [];
+  let failed = false;
 
-  const loadForLocation = useCallback(async (city: string) => {
-    const normalized = normalizeCity(city);
-    const requestId = ++locationRequestId.current;
-    setSelectedLocation(normalized);
-    setLoadingSalons(true);
-    setSalonLoadError(false);
-
-    if (!getSupportedLaunchCity(normalized)) {
-      setSalons([]);
-      setLoadingSalons(false);
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/salons?city=${encodeURIComponent(normalized)}&limit=12`);
-      const result = (await response.json()) as { success?: boolean; data?: ApiHomeSalon[] };
-      if (!response.ok || !result.success || !Array.isArray(result.data)) {
-        throw new Error(`Salon discovery returned status ${response.status}.`);
-      }
-      if (requestId !== locationRequestId.current) return;
-
-      setSalons(result.data.map((salon) => ({
-        _id: salon._id,
-        name: salon.name,
-        slug: salon.slug,
-        rating: salon.rating,
-        reviewCount: salon.reviewCount,
-        imageUrl: salon.coverImage || salon.images?.[0] || salon.logo || null,
-        address: salon.address,
-      })));
-    } catch (error) {
-      if (requestId !== locationRequestId.current) return;
-      console.error('Homepage salon discovery failed:', error instanceof Error ? error.name : 'UnknownError');
-      setSalons([]);
-      setSalonLoadError(true);
-    } finally {
-      if (requestId === locationRequestId.current) setLoadingSalons(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void loadForLocation(DEFAULT_LOCATION);
-    }, 0);
-    return () => {
-      window.clearTimeout(timeoutId);
-      locationRequestId.current += 1;
-    };
-  }, [loadForLocation]);
-
-  const loadAndPersistLocation = (city: string) => {
-    try {
-      window.localStorage.setItem('bookmynai-location', city);
-    } catch (error) {
-      console.error('Unable to save the homepage location:', error instanceof Error ? error.name : 'UnknownError');
-    }
-    void loadForLocation(city);
-  };
-  const handleLocationChange = ({ city }: { city: string; state: string }) => {
-    loadAndPersistLocation(city);
-  };
-  const handleUnsupportedCityChange = (city: string) => loadAndPersistLocation(city);
-
-  const unsupportedCity = !getSupportedLaunchCity(selectedLocation);
-
-  if (unsupportedCity) {
-    return <ComingSoonLocation city={selectedLocation} onChooseCity={handleUnsupportedCityChange} />;
+  try {
+    salons = await getTopSalons();
+  } catch (error) {
+    console.error('Homepage top salon lookup failed:', error instanceof Error ? error.name : 'UnknownError');
+    failed = true;
   }
 
+  if (failed) return <EmptyState message="Salon listings are temporarily unavailable. Please visit all salons and try again shortly." />;
+  if (!salons.length) return <EmptyState message="No approved salons are listed yet. Check back soon or browse all salons." />;
   return (
-    <div className="space-y-6">
-      <div className="max-w-sm">
-        <SupportedCitySelect
-          value={selectedLocation}
-          label="Browse salons in"
-          onChange={handleLocationChange}
-        />
-      </div>
-      {loadingSalons ? (
-        <p role="status" className="rounded-2xl border border-border bg-neutral-50 p-8 text-center text-sm text-foreground-secondary">
-          Loading salons in {selectedLocation}...
-        </p>
-      ) : salonLoadError ? (
-        <div className="space-y-4">
-          <EmptyState message="Salon listings are temporarily unavailable. Please try again shortly." />
-          <Button variant="outline" size="sm" onClick={() => void loadForLocation(selectedLocation)}>
-            Try again
-          </Button>
-        </div>
-      ) : salons.length > 0 ? (
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {salons.slice(0, 6).map((salon) => <SalonCard key={salon._id} salon={salon} />)}
-        </div>
-      ) : (
-        <EmptyState message={`No salons are listed in ${selectedLocation} yet. Once salons join BookMyNai, they'll show up right here.`} />
-      )}
+    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      {salons.map((salon) => <SalonCard key={salon._id} salon={salon} />)}
     </div>
   );
 }

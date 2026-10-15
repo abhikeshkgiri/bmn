@@ -11,7 +11,7 @@ import { BOOKING_STATUS } from '@/constants/booking';
 import { USER_ROLES } from '@/constants/roles';
 import { formatCurrency } from '@/utils/currency';
 import NotificationBell from '@/components/notifications/NotificationBell';
-import { Calendar, Clock3, DollarSign, CheckCircle2 } from 'lucide-react';
+import { Calendar, Clock3, DollarSign, CheckCircle2, Store } from 'lucide-react';
 
 interface DashboardData {
   salon: {
@@ -19,7 +19,7 @@ interface DashboardData {
     name: string;
     isActive: boolean;
     isVerified: boolean;
-    approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+    approvalStatus?: 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED';
     rejectionReason?: string | null;
   } | null;
   stats: {
@@ -162,6 +162,8 @@ export default function SalonDashboardRoutePage() {
               <p className="mt-2 text-sm font-medium">
                 Publication status: {data.salon.approvalStatus === 'REJECTED'
                   ? 'Rejected'
+                  : data.salon.approvalStatus === 'DRAFT'
+                    ? 'Draft — not submitted for review'
                   : (data.salon.approvalStatus === 'APPROVED' || (!data.salon.approvalStatus && data.salon.isVerified))
                     ? data.salon.isActive ? 'Approved and published' : 'Approved, but not currently published'
                     : 'Pending admin review'}
@@ -171,6 +173,10 @@ export default function SalonDashboardRoutePage() {
           </div>
           <div className="flex gap-3 flex-wrap items-center">
             <NotificationBell />
+            <Link href="/salons"><Button variant="outline"><Store size={16} className="mr-2" />View website</Button></Link>
+            {data.salon && ['DRAFT', 'REJECTED'].includes(data.salon.approvalStatus || '') && (
+              <Link href="/salon/onboarding"><Button variant="primary">Continue salon setup</Button></Link>
+            )}
             <Link href="/dashboard/salon/bookings"><Button variant="primary">Bookings</Button></Link>
             <Link href="/salon/services"><Button variant="secondary">Services</Button></Link>
             <Link href="/salon/barbers"><Button variant="secondary">Manage Barbers</Button></Link>

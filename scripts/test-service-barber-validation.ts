@@ -31,8 +31,15 @@ assert.equal(ServiceCreateSchema.safeParse({ ...service, price: 0 }).success, tr
 assert.equal(ServiceCreateSchema.safeParse({ ...service, category: 'NOT_A_CATEGORY' }).success, false);
 assert.equal(ServiceCreateSchema.safeParse({ ...service, owner: userId }).success, false);
 assert.equal(ServiceCreateSchema.safeParse({ ...service, image: '' }).success, true);
+assert.equal(ServiceCreateSchema.safeParse({ ...service, image: '/uploads/looks-salon-64b000000000000000000001/service/123e4567-e89b-12d3-a456-426614174000.png' }).success, true);
+assert.equal(ServiceCreateSchema.safeParse({ ...service, image: '/uploads/../private-uploads/file' }).success, false);
 assert.equal(ServiceCreateSchema.safeParse({ ...service, discountPrice: 1001 }).success, false);
 assert.equal(ServiceCreateSchema.safeParse({ ...service, discountPrice: 1000 }).success, true);
+assert.equal(ServiceCreateSchema.parse(service).displayOrder, 0);
+assert.equal(ServiceCreateSchema.safeParse({ ...service, displayOrder: -1 }).success, false);
+assert.equal(ServiceCreateSchema.safeParse({ ...service, displayOrder: 10001 }).success, false);
+assert.equal(ServiceUpdateSchema.safeParse({ displayOrder: 3 }).success, true);
+assert.equal(ServiceUpdateSchema.safeParse({ displayOrder: 1.5 }).success, false);
 assert.equal(ServiceUpdateSchema.safeParse({ price: 500, discountPrice: 501 }).success, false);
 assert.equal(ServiceUpdateSchema.safeParse({ price: 0 }).success, true);
 assert.equal(ServiceUpdateSchema.safeParse({ discountPrice: 500 }).success, true);
@@ -48,6 +55,7 @@ assert.equal(ServiceListSchema.safeParse({ salonId }).success, true);
 assert.equal(ServiceListSchema.safeParse({ salonId: 'bad' }).success, false);
 assert.equal(ServiceListSchema.safeParse({ category: 'INVALID' }).success, false);
 assert.equal(ServiceListSchema.safeParse({ limit: '100' }).success, false);
+assert.equal(ServiceListSchema.safeParse({ sortBy: 'displayOrder' }).success, true);
 assert.equal(isDiscountPriceValid(1000, 1001), false);
 assert.equal(isDiscountPriceValid(500, 500), true);
 assert.equal(isDiscountPriceValid(500, null), true);
@@ -56,16 +64,28 @@ const barber = {
   salonId,
   userId,
   name: '  Alex Barber  ',
+  title: 'Senior Barber',
   experienceYears: 5,
   services: [serviceId],
 };
 assert.equal(BarberCreateSchema.parse(barber).name, 'Alex Barber');
+assert.equal(BarberCreateSchema.parse(barber).title, 'Senior Barber');
+assert.equal(BarberCreateSchema.safeParse({
+  salonId,
+  name: 'Alex Barber',
+  title: 'Senior Barber',
+  experienceYears: 5,
+  services: [serviceId],
+}).success, true);
 assert.equal(BarberCreateSchema.safeParse({ ...barber, userId: 'x'.repeat(24) }).success, false);
 assert.equal(BarberCreateSchema.safeParse({ ...barber, services: ['not-an-object-id'] }).success, false);
 assert.equal(BarberCreateSchema.safeParse({ ...barber, profileImage: 'javascript:alert(1)' }).success, false);
+assert.equal(BarberCreateSchema.safeParse({ ...barber, profileImage: '/uploads/looks-salon-64b000000000000000000001/barber/123e4567-e89b-12d3-a456-426614174000.jpg' }).success, true);
+assert.equal(BarberCreateSchema.safeParse({ ...barber, profileImage: '/uploads/../private-uploads/file' }).success, false);
 assert.equal(BarberCreateSchema.safeParse({ ...barber, owner: userId }).success, false);
 assert.equal(BarberCreateSchema.safeParse({ ...barber, services: [serviceId, serviceId] }).success, false);
 assert.equal(BarberUpdateSchema.safeParse({ services: ['64b000000000000000000004'] }).success, true);
+assert.equal(BarberUpdateSchema.safeParse({ title: 'Senior Barber' }).success, true);
 assert.equal(BarberUpdateSchema.safeParse({ services: ['bad'] }).success, false);
 assert.equal(BarberUpdateSchema.safeParse({ profileImage: '' }).success, true);
 assert.equal(BarberUpdateSchema.safeParse({ isVerified: true }).success, false);

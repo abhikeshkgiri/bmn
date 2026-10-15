@@ -10,7 +10,6 @@ import type { SessionPayload, AuthUser, UserRole } from '@/types';
 import User from '@/models/User';
 import { connectDB } from '@/lib/db';
 import { assertProductionEnvironment } from '@/lib/env';
-import { getDevAuthUserById, shouldUseDevAuthFallback } from '@/lib/dev-auth-store';
 
 // Get the secret key for JWT signing/verification
 function getAuthSecret(): Uint8Array {
@@ -26,47 +25,37 @@ function getAuthSecret(): Uint8Array {
  * Returns null if not authenticated
  */
 export async function getCurrentUser(): Promise<AuthUser | null> {
+  assertProductionEnvironment();
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_CONFIG.COOKIE_NAME)?.value;
+  if (!token) return null;
+
+  const secret = getAuthSecret();
+  let userId: string;
   try {
-    assertProductionEnvironment();
-    const cookieStore = await cookies();
-    const token = cookieStore.get(SESSION_CONFIG.COOKIE_NAME)?.value;
-
-    if (!token) {
-      return null;
-    }
-
-    // Verify and decode the JWT token
-    const secret = getAuthSecret();
     const verified = await jwtVerify(token, secret);
     const payload = verified.payload as unknown as SessionPayload;
-
-    if (shouldUseDevAuthFallback()) {
-      return getDevAuthUserById(payload.userId);
-    }
-
-    // Verify user still exists and is active
-    await connectDB();
-    const user = await User.findById(payload.userId);
-
-    if (!user || !user.isActive) {
-      return null;
-    }
-
-    return {
-      _id: user._id.toString(),
-      name: user.name,
-      phone: user.phone,
-      email: user.email,
-      avatar: user.avatar,
-      role: user.role,
-      isActive: user.isActive,
-      isVerified: user.isVerified,
-      notificationPreferences: user.notificationPreferences,
-    };
+    if (typeof payload.userId !== 'string' || !payload.userId) return null;
+    userId = payload.userId;
   } catch {
-    // Token invalid, expired, or verification failed
     return null;
   }
+
+  await connectDB();
+  const user = await User.findById(userId);
+  if (!user || !user.isActive) return null;
+
+  return {
+    _id: user._id.toString(),
+    name: user.name,
+    phone: user.phone,
+    email: user.email,
+    avatar: user.avatar,
+    role: user.role,
+    isActive: user.isActive,
+    isVerified: user.isVerified,
+    notificationPreferences: user.notificationPreferences,
+  };
 }
 
 /**
@@ -98,15 +87,11 @@ export async function requireRole(requiredRole: UserRole | UserRole[]): Promise<
  * Check if current user has a specific role
  */
 export async function hasRole(requiredRole: UserRole | UserRole[]): Promise<boolean> {
-  try {
-    const user = await getCurrentUser();
-    if (!user) return false;
+  const user = await getCurrentUser();
+  if (!user) return false;
 
-    const roles = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
-    return roles.includes(user.role);
-  } catch {
-    return false;
-  }
+  const roles = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
+  return roles.includes(user.role);
 }
 
 /**

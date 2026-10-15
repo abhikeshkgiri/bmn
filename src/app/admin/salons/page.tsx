@@ -10,6 +10,7 @@ interface AdminSalon {
   _id: string;
   name: string;
   slug: string;
+  salonType?: string;
   description?: string;
   logo?: string | null;
   coverImage?: string | null;
@@ -23,13 +24,16 @@ interface AdminSalon {
     postalCode?: string;
   };
   contact?: { phone?: string; email?: string; website?: string };
+  socialLinks?: { instagram?: string; facebook?: string; youtube?: string };
+  facilities?: string[];
   openingHours?: Record<string, { isOpen: boolean; openTime?: string; closeTime?: string }>;
   services?: Array<{ _id: string; name: string; description?: string; category?: string; price: number; duration: number; isActive: boolean }>;
-  barbers?: Array<{ _id: string; name: string; profileImage?: string; bio?: string; experienceYears?: number; isVerified: boolean; isActive: boolean }>;
+  barbers?: Array<{ _id: string; name: string; title?: string; profileImage?: string; bio?: string; experienceYears?: number; specializations?: string[]; isVerified: boolean; isActive: boolean; user?: { name?: string; phone?: string } | null }>;
   owner?: { name?: string; phone?: string; email?: string; role?: string };
   isActive: boolean;
   isVerified: boolean;
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  identityDocuments?: { aadhaar: boolean; pan: boolean };
   rejectionReason?: string | null;
   createdAt: string;
 }
@@ -179,6 +183,7 @@ export default function AdminSalonsPage() {
                 <article key={salon._id} className="flex flex-col gap-3 rounded-xl border border-neutral-200 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="font-semibold">{salon.name}</h2>
+                    {salon.salonType && <p className="text-xs uppercase text-neutral-500">{salon.salonType.replace(/_/g, ' ')}</p>}
                     <p className="text-sm text-neutral-600">{[salon.address?.area, salon.address?.city, salon.address?.state].filter(Boolean).join(', ') || 'Location incomplete'}</p>
                     <p className="text-xs text-neutral-500">Submitted {new Date(salon.createdAt).toLocaleDateString()}</p>
                   </div>
@@ -219,9 +224,14 @@ export default function AdminSalonsPage() {
               <section>
                 <h3 className="font-semibold">Address and contact</h3>
                 <p className="mt-2 text-sm">{[selected.address?.addressLine1, selected.address?.addressLine2, selected.address?.area, selected.address?.city, selected.address?.state, selected.address?.postalCode].filter(Boolean).join(', ') || 'Incomplete address'}</p>
+                <p className="mt-1 text-sm">Type: {selected.salonType?.replace(/_/g, ' ') || 'Not supplied'}</p>
                 <p className="mt-1 text-sm">Owner: {selected.owner?.name || 'Unknown'} ({selected.owner?.role || 'role unavailable'})</p>
                 <p className="mt-1 text-sm">Phone: {selected.contact?.phone || selected.owner?.phone || 'Not supplied'}</p>
                 <p className="mt-1 text-sm">Email: {selected.contact?.email || selected.owner?.email || 'Not supplied'}</p>
+                {selected.contact?.website && <p className="mt-1 break-all text-sm">Website: {selected.contact.website}</p>}
+                <p className="mt-1 break-all text-sm">Social links: {Object.entries(selected.socialLinks || {}).filter(([, url]) => url).map(([network, url]) => `${network}: ${url}`).join(' · ') || 'None supplied'}</p>
+                <p className="mt-1 text-sm">Facilities: {selected.facilities?.map((facility) => facility.replace(/_/g, ' ')).join(', ') || 'None supplied'}</p>
+                {selected.description && <p className="mt-2 whitespace-pre-wrap text-sm">{selected.description}</p>}
               </section>
               <section>
                 <h3 className="font-semibold">Submitted services</h3>
@@ -235,7 +245,7 @@ export default function AdminSalonsPage() {
                 <h3 className="font-semibold">Associated barbers</h3>
                 {selected.barbers?.length ? (
                   <ul className="mt-2 space-y-2 text-sm">
-                    {selected.barbers.map((barber) => <li key={barber._id}>{barber.name} · {barber.experienceYears ?? 0} years · {barber.isVerified && barber.isActive ? 'Approved' : 'Pending'}</li>)}
+                    {selected.barbers.map((barber) => <li key={barber._id}>{barber.name}{barber.title ? ` · ${barber.title}` : ''} · {barber.experienceYears ?? 0} years · {barber.specializations?.map((specialization) => specialization.replace(/_/g, ' ')).join(', ') || 'No specialties'} · {barber.user ? `Account: ${barber.user.name || barber.user.phone || 'linked'}` : 'Profile only; no account linked'} · {barber.isVerified && barber.isActive ? 'Approved and active' : 'Pending'}</li>)}
                   </ul>
                 ) : <p className="mt-2 text-sm text-neutral-500">No barbers associated.</p>}
               </section>
@@ -244,6 +254,17 @@ export default function AdminSalonsPage() {
                 {selected.openingHours ? <ul className="mt-2 grid grid-cols-2 gap-1 text-sm">{Object.entries(selected.openingHours).map(([day, hours]) => <li key={day}>{day}: {hours.isOpen ? `${hours.openTime || '—'}–${hours.closeTime || '—'}` : 'Closed'}</li>)}</ul> : <p className="mt-2 text-sm text-neutral-500">Opening hours not supplied.</p>}
               </section>
             </div>
+            <section className="space-y-2 border-t border-neutral-200 pt-4">
+              <h3 className="font-semibold">Owner identity documents</h3>
+              <div className="flex flex-wrap gap-3">
+                {selected.identityDocuments?.aadhaar ? (
+                  <a className="font-semibold text-brand-pink underline" href={`/api/salon/onboarding/documents?salonId=${encodeURIComponent(selected._id)}&kind=aadhaar`}>Download Aadhaar</a>
+                ) : <span className="text-sm text-neutral-500">Aadhaar not uploaded</span>}
+                {selected.identityDocuments?.pan ? (
+                  <a className="font-semibold text-brand-pink underline" href={`/api/salon/onboarding/documents?salonId=${encodeURIComponent(selected._id)}&kind=pan`}>Download PAN</a>
+                ) : <span className="text-sm text-neutral-500">PAN not uploaded</span>}
+              </div>
+            </section>
 
             {statusLabel(selected) !== 'APPROVED' ? (
               <div className="space-y-3 border-t border-neutral-200 pt-4">

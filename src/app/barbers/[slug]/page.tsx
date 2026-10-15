@@ -32,6 +32,7 @@ interface Barber {
   portfolio?: PortfolioItem[];
   rating: number;
   reviewCount: number;
+  isDemoPreview?: boolean;
   offersHomeService: boolean;
   homeServiceRadius?: number;
   isActive: boolean;
@@ -116,12 +117,17 @@ export default async function BarberDetailPage({
                 <div className="mb-6">
                   <h1 className="text-4xl font-bold text-foreground mb-2">{barber.name}</h1>
                   <p className="text-lg text-foreground-secondary">Professional Barber</p>
+                  {barber.isDemoPreview && (
+                    <p role="note" className="mt-3 rounded-xl border border-info-200 bg-info-50 p-3 text-sm text-info-700">
+                      Demo preview profile. The barber, services, prices, and availability are illustrative, not a real operating service.
+                    </p>
+                  )}
                   <FavoriteButton targetType="BARBER" targetId={barber._id} />
                 </div>
 
                 {/* Rating & Experience */}
                 <div className="flex flex-col md:flex-row gap-6 mb-6 pb-6 border-b border-border">
-                  {barber.rating > 0 && (
+                  {!barber.isDemoPreview && barber.rating > 0 && (
                     <div className="flex items-center gap-3">
                       <Star size={20} className="fill-brand-pink text-brand-pink" />
                       <div>

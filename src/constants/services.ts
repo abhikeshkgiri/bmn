@@ -56,3 +56,13 @@ export const SALON_FACILITY = {
 export type SalonFacility = (typeof SALON_FACILITY)[keyof typeof SALON_FACILITY];
 
 export const SALON_FACILITY_ARRAY = Object.values(SALON_FACILITY);
+
+export const SALON_TYPE = {
+  BARBERSHOP: 'BARBERSHOP',
+  MEN_SALON: 'MEN_SALON',
+  WOMEN_SALON: 'WOMEN_SALON',
+  UNISEX_SALON: 'UNISEX_SALON',
+} as const;
+
+export type SalonType = (typeof SALON_TYPE)[keyof typeof SALON_TYPE];
+export const SALON_TYPE_ARRAY = Object.values(SALON_TYPE);

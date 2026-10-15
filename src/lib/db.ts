@@ -8,7 +8,6 @@ import path from 'node:path';
 
 if (typeof window === 'undefined') {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('dotenv').config({
       path: path.resolve(process.cwd(), '.env.local'),
     });
@@ -82,7 +81,7 @@ export async function connectDB(): Promise<typeof mongoose> {
     return cached.conn;
   } catch (error) {
     cached.promise = null;
-    console.error("Failed to connect to MongoDB:", error);
+    console.error("Failed to connect to MongoDB:", error instanceof Error ? error.name : "UnknownError");
     throw error;
   }
 }

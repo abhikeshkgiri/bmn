@@ -13,6 +13,8 @@ import { generateBookingNumber } from '@/services/booking.service';
 import { generateOtp, hashOtp, verifyOtpHash } from '@/services/auth.service';
 import { sendOtp } from '@/lib/otp-provider';
 import { recordAuditEvent } from '@/services/audit.service';
+import { isFeature22DemoRecord } from '@/utils/transaction-eligibility';
+import { isFeature22Booking } from '@/services/demo-booking-guard.service';
 import {
   notifyBookingCancelled,
   notifyBookingCompleted,
@@ -30,6 +32,7 @@ export const HOME_SERVICE_ERRORS = {
   LOCATION_REQUIRED: { code: 'LOCATION_REQUIRED', message: 'A saved address with coordinates is required' },
   OUTSIDE_SERVICE_AREA: { code: 'OUTSIDE_SERVICE_AREA', message: 'This address is outside the barber service area' },
   BARBER_UNAVAILABLE: { code: 'BARBER_UNAVAILABLE', message: 'Barber is unavailable for this request' },
+  DEMO_TRANSACTION_NOT_ALLOWED: { code: 'DEMO_TRANSACTION_NOT_ALLOWED', message: 'Demo listings cannot be booked' },
   INVALID_TRANSITION: { code: 'INVALID_HOME_SERVICE_TRANSITION', message: 'Invalid home-service state transition' },
   OTP_INVALID: { code: 'INVALID_START_OTP', message: 'Invalid or expired service OTP' },
   OTP_LIMIT: { code: 'START_OTP_ATTEMPTS_EXCEEDED', message: 'Too many OTP attempts' },
@@ -55,10 +58,22 @@ function activeHomeServiceStatuses() {
 }
 
 async function expireStaleRequests() {
-  await Booking.updateMany(
-    { bookingType: BOOKING_TYPE.HOME_SERVICE, homeServiceStatus: HomeServiceStatus.REQUESTED, requestedAt: { $lt: new Date(Date.now() - REQUEST_TIMEOUT_MINUTES * 60 * 1000) } },
-    { $set: { homeServiceStatus: HomeServiceStatus.EXPIRED, status: BOOKING_STATUS.CANCELLED, cancellationReason: 'Home-service request expired' } },
-  );
+  const staleFilter = {
+    bookingType: BOOKING_TYPE.HOME_SERVICE,
+    homeServiceStatus: HomeServiceStatus.REQUESTED,
+    requestedAt: { $lt: new Date(Date.now() - REQUEST_TIMEOUT_MINUTES * 60 * 1000) },
+  };
+  const staleBookings = await Booking.find(staleFilter).select('_id salon barber service');
+  const eligibleBookingIds: Types.ObjectId[] = [];
+  for (const booking of staleBookings) {
+    if (!await isFeature22Booking(booking)) eligibleBookingIds.push(booking._id);
+  }
+  if (eligibleBookingIds.length > 0) {
+    await Booking.updateMany(
+      { ...staleFilter, _id: { $in: eligibleBookingIds } },
+      { $set: { homeServiceStatus: HomeServiceStatus.EXPIRED, status: BOOKING_STATUS.CANCELLED, cancellationReason: 'Home-service request expired' } },
+    );
+  }
 }
 
 export async function createHomeServiceBooking(input: {
@@ -78,12 +93,15 @@ export async function createHomeServiceBooking(input: {
   if (![input.salonId, input.barberId, input.serviceId, input.addressId].every(Types.ObjectId.isValid)) throw HOME_SERVICE_ERRORS.INVALID_REQUEST;
 
   const [salon, barber, service, address] = await Promise.all([
-    Salon.findOne({ _id: input.salonId, isActive: true }).select('location bookingLockVersion'),
-    Barber.findOne({ _id: input.barberId, salon: input.salonId, isActive: true, isAvailable: true, offersHomeService: true }).select('salon homeServiceRadius services user'),
-    Service.findOne({ _id: input.serviceId, salon: input.salonId, isActive: true }).select('duration'),
+    Salon.findOne({ _id: input.salonId, isActive: true, demoKey: { $not: /^feature22:/ } }).select('location bookingLockVersion +demoKey'),
+    Barber.findOne({ _id: input.barberId, salon: input.salonId, isActive: true, isAvailable: true, offersHomeService: true, demoKey: { $not: /^feature22:/ } }).select('salon homeServiceRadius services user +demoKey'),
+    Service.findOne({ _id: input.serviceId, salon: input.salonId, isActive: true, demoKey: { $not: /^feature22:/ } }).select('duration +demoKey'),
     CustomerAddress.findOne({ _id: input.addressId, customer: input.currentUser._id }),
   ]);
   if (!salon || !barber || !service) throw HOME_SERVICE_ERRORS.BARBER_UNAVAILABLE;
+  if (isFeature22DemoRecord(salon.demoKey, barber.demoKey, service.demoKey)) {
+    throw HOME_SERVICE_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+  }
   if (!address) throw HOME_SERVICE_ERRORS.ADDRESS_NOT_OWNED;
   if (address.latitude === undefined || address.longitude === undefined || !salon.location?.coordinates) throw HOME_SERVICE_ERRORS.LOCATION_REQUIRED;
   if (!(barber.services ?? []).some((id: Types.ObjectId) => id.toString() === input.serviceId)) throw HOME_SERVICE_ERRORS.BARBER_UNAVAILABLE;
@@ -102,7 +120,25 @@ export async function createHomeServiceBooking(input: {
   let createdId: Types.ObjectId | null = null;
   try {
     await session.withTransaction(async () => {
-      await Barber.updateOne({ _id: input.barberId }, { $inc: { bookingLockVersion: 1 } }, { session });
+      const salonLock = await Salon.updateOne(
+        { _id: input.salonId, isActive: true, demoKey: { $not: /^feature22:/ } },
+        { $inc: { bookingLockVersion: 1 } },
+        { session },
+      );
+      const barberLock = await Barber.updateOne(
+        { _id: input.barberId, salon: input.salonId, isActive: true, isAvailable: true, offersHomeService: true, demoKey: { $not: /^feature22:/ } },
+        { $inc: { bookingLockVersion: 1 } },
+        { session },
+      );
+      const currentService = await Service.exists({
+        _id: input.serviceId,
+        salon: input.salonId,
+        isActive: true,
+        demoKey: { $not: /^feature22:/ },
+      }).session(session);
+      if (salonLock.matchedCount !== 1 || barberLock.matchedCount !== 1 || !currentService) {
+        throw HOME_SERVICE_ERRORS.BARBER_UNAVAILABLE;
+      }
       const dayStart = new Date(appointmentDate.toDateString());
       const dayEnd = new Date(dayStart);
       dayEnd.setDate(dayEnd.getDate() + 1);
@@ -136,8 +172,15 @@ async function getAuthorizedBooking(id: string, actor: AuthUser) {
   const booking = await Booking.findOne({ _id: id, bookingType: BOOKING_TYPE.HOME_SERVICE }).select('+startOtpHash +startOtpExpiresAt +startOtpAttempts');
   if (!booking) throw HOME_SERVICE_ERRORS.INVALID_REQUEST;
   const barber = await Barber.findById(booking.barber).select('user');
-  const allowed = actor.role === 'ADMIN' || actor.role === 'SUPER_ADMIN' || booking.customer.toString() === actor._id || barber?.user.toString() === actor._id;
+  const allowed = actor.role === 'ADMIN' || actor.role === 'SUPER_ADMIN' || booking.customer.toString() === actor._id || barber?.user?.toString() === actor._id;
   if (!allowed) throw HOME_SERVICE_ERRORS.UNAUTHORIZED;
+  if (isFeature22DemoRecord(
+    (await Salon.findById(booking.salon).select('+demoKey'))?.demoKey,
+    (await Barber.findById(booking.barber).select('+demoKey'))?.demoKey,
+    (await Service.findById(booking.service).select('+demoKey'))?.demoKey,
+  )) {
+    throw HOME_SERVICE_ERRORS.DEMO_TRANSACTION_NOT_ALLOWED;
+  }
   return booking;
 }
 
@@ -152,7 +195,7 @@ const transitions: Record<string, HomeServiceStatus[]> = {
 export async function transitionHomeService(actor: AuthUser, id: string, next: HomeServiceStatus) {
   const booking = await getAuthorizedBooking(id, actor);
   const barber = await Barber.findById(booking.barber).select('user');
-  const barberAction = actor.role === 'BARBER' && barber?.user.toString() === actor._id;
+  const barberAction = actor.role === 'BARBER' && barber?.user?.toString() === actor._id;
   if (next === HomeServiceStatus.CANCELLED && booking.customer.toString() === actor._id) {
     if (![HomeServiceStatus.REQUESTED, HomeServiceStatus.ACCEPTED, HomeServiceStatus.ON_THE_WAY, HomeServiceStatus.ARRIVED].includes(booking.homeServiceStatus as HomeServiceStatus)) throw HOME_SERVICE_ERRORS.INVALID_TRANSITION;
   } else if (!barberAction && actor.role !== 'ADMIN' && actor.role !== 'SUPER_ADMIN') {
@@ -176,7 +219,7 @@ export async function transitionHomeService(actor: AuthUser, id: string, next: H
 export async function completeHomeService(actor: AuthUser, id: string) {
   const booking = await getAuthorizedBooking(id, actor);
   const barber = await Barber.findById(booking.barber).select('user');
-  if (actor.role !== 'BARBER' || barber?.user.toString() !== actor._id) throw HOME_SERVICE_ERRORS.UNAUTHORIZED;
+  if (actor.role !== 'BARBER' || barber?.user?.toString() !== actor._id) throw HOME_SERVICE_ERRORS.UNAUTHORIZED;
   if (booking.homeServiceStatus !== HomeServiceStatus.SERVICE_STARTED) throw HOME_SERVICE_ERRORS.INVALID_TRANSITION;
   const updated = await Booking.findOneAndUpdate(
     { _id: id, homeServiceStatus: HomeServiceStatus.SERVICE_STARTED },
@@ -205,7 +248,7 @@ export async function issueStartOtp(actor: AuthUser, id: string) {
 export async function verifyStartOtp(actor: AuthUser, id: string, otp: string) {
   const booking = await getAuthorizedBooking(id, actor);
   const barber = await Barber.findById(booking.barber).select('user');
-  if (actor.role !== 'BARBER' || barber?.user.toString() !== actor._id || booking.homeServiceStatus !== HomeServiceStatus.ARRIVED) throw HOME_SERVICE_ERRORS.UNAUTHORIZED;
+  if (actor.role !== 'BARBER' || barber?.user?.toString() !== actor._id || booking.homeServiceStatus !== HomeServiceStatus.ARRIVED) throw HOME_SERVICE_ERRORS.UNAUTHORIZED;
   if ((booking.startOtpAttempts ?? 0) >= MAX_OTP_ATTEMPTS) throw HOME_SERVICE_ERRORS.OTP_LIMIT;
   const valid = Boolean(booking.startOtpHash && booking.startOtpExpiresAt && booking.startOtpExpiresAt > new Date() && /^\d{6}$/.test(otp) && verifyOtpHash(otp, booking.startOtpHash));
   if (!valid) {
@@ -220,7 +263,7 @@ export async function verifyStartOtp(actor: AuthUser, id: string, otp: string) {
 export async function updateBarberLocation(actor: AuthUser, id: string, location: Coordinates) {
   const booking = await getAuthorizedBooking(id, actor);
   const barber = await Barber.findById(booking.barber).select('user');
-  if (actor.role !== 'BARBER' || barber?.user.toString() !== actor._id || !activeHomeServiceStatuses().includes(booking.homeServiceStatus as HomeServiceStatus)) throw HOME_SERVICE_ERRORS.UNAUTHORIZED;
+  if (actor.role !== 'BARBER' || barber?.user?.toString() !== actor._id || !activeHomeServiceStatuses().includes(booking.homeServiceStatus as HomeServiceStatus)) throw HOME_SERVICE_ERRORS.UNAUTHORIZED;
   if (!Number.isFinite(location.latitude) || !Number.isFinite(location.longitude) || location.latitude < -90 || location.latitude > 90 || location.longitude < -180 || location.longitude > 180) throw HOME_SERVICE_ERRORS.INVALID_REQUEST;
   return Booking.findOneAndUpdate({ _id: id, bookingType: BOOKING_TYPE.HOME_SERVICE }, { $set: { latestBarberLocation: { ...location, updatedAt: new Date() } } }, { new: true }).select('latestBarberLocation homeServiceStatus');
 }

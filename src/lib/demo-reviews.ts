@@ -1,6 +1,5 @@
 export interface DemoReview {
   customer: string;
-  rating: number;
   review: string;
   salon: string;
   city: string;
@@ -9,36 +8,32 @@ export interface DemoReview {
 
 export const DEMO_REVIEWS: DemoReview[] = [
   {
-    customer: 'Amit',
-    rating: 5,
-    review: 'Very smooth booking experience and the barber was on time.',
-    salon: 'Delhi Grooming Studio',
+    customer: 'Sample preview',
+    review: 'Illustrative placeholder copy only. No customer review has been submitted.',
+    salon: 'Demo listing',
     city: 'Delhi',
-    badge: 'Verified Booking',
+    badge: 'Preview only',
   },
   {
-    customer: 'Priya',
-    rating: 5,
-    review: 'Easy to find available slots and book an appointment without hassle.',
-    salon: 'Rohini Hair & Beauty',
+    customer: 'Sample preview',
+    review: 'Illustrative placeholder copy only. No customer review has been submitted.',
+    salon: 'Demo listing',
     city: 'Delhi',
-    badge: 'Demo review',
+    badge: 'Preview only',
   },
   {
-    customer: 'Rahul',
-    rating: 4,
-    review: 'Good service and a simple booking process. The slot selection was easy.',
-    salon: 'Connaught Place Salon',
+    customer: 'Sample preview',
+    review: 'Illustrative placeholder copy only. No customer review has been submitted.',
+    salon: 'Demo listing',
     city: 'Delhi',
-    badge: 'Demo review',
+    badge: 'Preview only',
   },
   {
-    customer: 'Neha',
-    rating: 5,
-    review: 'The salon experience was polished and the booking flow worked perfectly.',
-    salon: 'Urban Trim Studio',
+    customer: 'Sample preview',
+    review: 'Illustrative placeholder copy only. No customer review has been submitted.',
+    salon: 'Demo listing',
     city: 'Mumbai',
-    badge: 'Verified Booking',
+    badge: 'Preview only',
   },
 ];
 

@@ -12,6 +12,7 @@ import { APPROVED_SALON_STATUS_FILTER } from '@/utils/salon-approval';
 import { buildActiveServiceSearchFilter } from '@/utils/service-search';
 import { getSingleQueryParam, NearbySalonQuerySchema } from '@/validations/salon-discovery.schema';
 import { ZodError } from 'zod';
+import { FEATURE22_DEMO_KEY_PREFIX } from '@/lib/feature22-demo-data';
 
 interface NearbySalon {
   _id: string;
@@ -31,6 +32,7 @@ interface NearbySalon {
   rating: number;
   reviewCount: number;
   isVerified: boolean;
+  isDemoPreview: boolean;
   distance: number;
 }
 
@@ -151,6 +153,12 @@ async function getNearbySalons(request: NextRequest): Promise<NextResponse<Nearb
                 rating: 1,
                 reviewCount: 1,
                 isVerified: 1,
+                isDemoPreview: {
+                  $regexMatch: {
+                    input: { $ifNull: ['$demoKey', ''] },
+                    regex: `^${FEATURE22_DEMO_KEY_PREFIX}`,
+                  },
+                },
                 distance: '$geoDistance',
               },
             },

@@ -21,7 +21,7 @@ export interface ListServicesOptions {
   search?: string;
   page?: number;
   limit?: number;
-  sortBy?: 'createdAt' | 'name' | 'price' | 'duration';
+  sortBy?: 'createdAt' | 'name' | 'price' | 'duration' | 'displayOrder';
 }
 
 export interface PaginationData {
@@ -128,6 +128,7 @@ export async function createService(
     duration: input.duration,
     price: input.price,
     discountPrice: input.discountPrice ?? null,
+    displayOrder: input.displayOrder,
     isActive: true,
   });
 
@@ -240,6 +241,7 @@ export async function listServices(options: ListServicesOptions = {}, currentUse
     name: { name: 1 },
     price: { price: 1 },
     duration: { duration: 1 },
+    displayOrder: { displayOrder: 1, name: 1 },
   };
   const sort = sortMap[sortBy] || sortMap.createdAt;
 
@@ -347,6 +349,9 @@ export async function updateService(
 
   if (input.discountPrice !== undefined) {
     service.discountPrice = input.discountPrice ?? null;
+  }
+  if (input.displayOrder !== undefined) {
+    service.displayOrder = input.displayOrder;
   }
 
   await service.save();

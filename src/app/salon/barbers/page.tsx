@@ -11,6 +11,7 @@ import { Spinner } from '@/components/ui/Loading';
 import { BARBER_SPECIALIZATION } from '@/constants/services';
 import { USER_ROLES } from '@/constants/roles';
 import { Eye, EyeOff, Pencil, Plus } from 'lucide-react';
+import SalonFileUpload from '@/components/salon/SalonFileUpload';
 
 interface Service {
   _id: string;
@@ -22,6 +23,7 @@ interface Service {
 interface Barber {
   _id: string;
   name: string;
+  title?: string;
   slug: string;
   bio?: string;
   profileImage?: string;
@@ -36,7 +38,7 @@ interface Barber {
     _id: string;
     name: string;
     phone: string;
-  };
+  } | null;
 }
 
 interface Salon {
@@ -81,8 +83,8 @@ export default function SalonBarbersPage() {
   const [barberTotalPages, setBarberTotalPages] = useState(1);
 
   const [formData, setFormData] = useState({
-    userId: '',
     name: '',
+    title: '',
     bio: '',
     experienceYears: '0',
     specializations: [] as string[],
@@ -203,8 +205,11 @@ export default function SalonBarbersPage() {
 
     try {
       const payload = {
-        ...(!editingId && { salonId: selectedSalonId, userId: formData.userId.trim() }),
+        ...(!editingId && {
+          salonId: selectedSalonId,
+        }),
         name: formData.name,
+        title: formData.title,
         bio: formData.bio,
         experienceYears: Number(formData.experienceYears),
         specializations: formData.specializations,
@@ -233,7 +238,9 @@ export default function SalonBarbersPage() {
       setBarbers((current) => editingId
         ? current.map((barber) => barber._id === editingId ? result.data : barber)
         : [result.data, ...current]);
-      setNotice(editingId ? 'Barber profile updated successfully.' : 'Barber profile added. It may require verification before public display.');
+      setNotice(editingId
+        ? 'Barber profile updated successfully.'
+        : 'Barber profile added. It will be available for bookings after this salon is approved and the profile is active.');
       if (!editingId) {
         setBarberPage(1);
         setBarberReloadKey((key) => key + 1);
@@ -275,8 +282,8 @@ export default function SalonBarbersPage() {
 
   const resetForm = () => {
     setFormData({
-      userId: '',
       name: '',
+      title: '',
       bio: '',
       experienceYears: '0',
       specializations: [],
@@ -308,8 +315,8 @@ export default function SalonBarbersPage() {
   const startEditing = (barber: Barber) => {
     setEditingId(barber._id);
     setFormData({
-      userId: '',
       name: barber.name,
+      title: barber.title || '',
       bio: barber.bio || '',
       experienceYears: String(barber.experienceYears),
       specializations: barber.specializations || [],
@@ -365,10 +372,9 @@ export default function SalonBarbersPage() {
 
         <Card className="mb-6 flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="font-semibold">Barber account required</h2>
-            <p className="mt-1 text-sm text-foreground-secondary">Barbers create their own account through onboarding. Add the existing account ID here; owners cannot create barber credentials.</p>
+            <h2 className="font-semibold">Add your salon team</h2>
+            <p className="mt-1 text-sm text-foreground-secondary">Add your barber’s profile and salon services here. They do not need a separate account; active profiles become bookable when your salon is approved.</p>
           </div>
-          <Link href="/barber/onboarding"><Button type="button" variant="outline">Barber onboarding</Button></Link>
         </Card>
 
         {salons[0] && <p className="mb-6 text-sm text-foreground-secondary">Managing barbers for <span className="font-medium text-foreground">{salons[0].name}</span></p>}
@@ -409,22 +415,6 @@ export default function SalonBarbersPage() {
             {formError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{formError}</p>}
             <form onSubmit={handleSubmitBarber} className="space-y-4">
               <fieldset disabled={saving || servicesLoading} className="space-y-4">
-              {/* User ID */}
-              {!editingId && <div>
-                <label className="block text-sm font-medium text-foreground mb-1">
-                  User/Barber Account ID *
-                </label>
-                <Input
-                  required
-                  value={formData.userId}
-                  onChange={(e) => setFormData({ ...formData, userId: e.target.value.trim() })}
-                  placeholder="Enter user ID (24-char MongoDB ID)"
-                />
-                <p className="text-xs text-foreground-secondary mt-1">
-                  The user must have an active BARBER account and must not already be associated with another salon. Never enter another person&apos;s credentials.
-                </p>
-              </div>}
-
               {/* Name */}
               <div>
                 <label className="block text-sm font-medium text-foreground mb-1">
@@ -437,6 +427,15 @@ export default function SalonBarbersPage() {
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="e.g., Rahul Kumar"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Title / role</label>
+                <Input
+                  maxLength={100}
+                  value={formData.title}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  placeholder="e.g., Senior Barber"
                 />
               </div>
 
@@ -458,14 +457,12 @@ export default function SalonBarbersPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1">
-                    Profile Image URL
-                  </label>
-                  <Input
-                    type="url"
-                    value={formData.profileImage}
-                    onChange={(e) => setFormData({ ...formData, profileImage: e.target.value })}
-                    placeholder="https://..."
+                  <SalonFileUpload
+                    kind="barber"
+                    label="Barber profile image (JPG, PNG, WebP; max 8 MB)"
+                    accept="image/jpeg,image/png,image/webp"
+                    previewUrl={formData.profileImage || undefined}
+                    onUploaded={(result) => { if (result.url) setFormData((current) => ({ ...current, profileImage: result.url || '' })); }}
                   />
                 </div>
               </div>
@@ -584,6 +581,7 @@ export default function SalonBarbersPage() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
                       <h3 className="font-bold text-lg text-foreground">{barber.name}</h3>
+                      {barber.title && <span className="text-sm text-foreground-secondary">{barber.title}</span>}
                       {barber.isVerified && (
                         <Badge variant="success" className="text-xs">
                           Verified
@@ -597,6 +595,7 @@ export default function SalonBarbersPage() {
                         {barber.experienceYears} years
                       </span>
                       {!barber.isActive && <Badge variant="error" className="text-xs">Inactive</Badge>}
+                      {!barber.user && <Badge variant="info" className="text-xs">Salon-managed profile</Badge>}
                     </div>
 
                     {barber.specializations.length > 0 && (

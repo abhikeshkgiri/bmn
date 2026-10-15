@@ -13,11 +13,6 @@ import { sendOtp } from '@/lib/otp-provider';
 import { rateLimiter } from '@/lib/rate-limit';
 import { OTP_CONFIG, AUTH_ERRORS, AUTH_DEV_MODE, DEV_OTP } from '@/constants/auth';
 import { USER_ROLES } from '@/constants/roles';
-import {
-  devRequestOtp,
-  devVerifyOtpAndGetUser,
-  shouldUseDevAuthFallback,
-} from '@/lib/dev-auth-store';
 
 import type { AuthUser } from '@/types';
 
@@ -75,22 +70,13 @@ export async function requestOtp(
       return { otp: null, success: false };
     }
 
-    if (shouldUseDevAuthFallback()) {
-      return devRequestOtp(phone, signupRole);
-    }
-
     await connectDB();
 
     // Invalidate any existing unverified OTPs for this phone
     await OtpVerification.updateMany({ phone, verified: false }, { verified: true });
 
     // Generate OTP
-    let otp: string;
-    if (AUTH_DEV_MODE) {
-      otp = DEV_OTP;
-    } else {
-      otp = generateOtp();
-    }
+    const otp = AUTH_DEV_MODE ? DEV_OTP : generateOtp();
 
     // Hash OTP for storage
     const otpHash = hashOtp(otp);
@@ -108,19 +94,19 @@ export async function requestOtp(
       signupRole,
     });
 
-    // Send OTP through provider
-    try {
-      await sendOtp(phone, otp);
-    } catch (error) {
-      console.error('Failed to send OTP:', error);
-      // In production, log this but don't expose to client
-      throw new Error(AUTH_ERRORS.AUTH_PROVIDER_ERROR);
+    if (!AUTH_DEV_MODE) {
+      try {
+        await sendOtp(phone, otp);
+      } catch (error) {
+        console.error('Failed to send OTP:', error instanceof Error ? error.name : 'UnknownError');
+        throw new Error(AUTH_ERRORS.AUTH_PROVIDER_ERROR);
+      }
     }
 
     // Return OTP only in dev mode
     return { otp: AUTH_DEV_MODE ? otp : null, success: true };
   } catch (error) {
-    console.error('Error requesting OTP:', error);
+    console.error('Error requesting OTP:', error instanceof Error ? error.name : 'UnknownError');
     throw error;
   }
 }
@@ -133,10 +119,6 @@ export async function verifyOtpAndGetUser(
   otpInput: string
 ): Promise<{ user: AuthUser; isNewUser: boolean }> {
   try {
-    if (shouldUseDevAuthFallback()) {
-      return devVerifyOtpAndGetUser(phoneInput, otpInput);
-    }
-
     await connectDB();
 
     // Normalize phone number
@@ -225,7 +207,7 @@ export async function verifyOtpAndGetUser(
     };
   } catch (error) {
     if (!isExpectedOtpError(error)) {
-      console.error('Error verifying OTP:', error);
+      console.error('Error verifying OTP:', error instanceof Error ? error.name : 'UnknownError');
     }
     throw error;
   }

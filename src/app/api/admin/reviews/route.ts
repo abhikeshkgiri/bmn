@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminAccess } from '@/lib/admin';
 import { requireAuth } from '@/lib/auth';
 import { listReviewsForAdmin, moderateReviewAsAdmin } from '@/services/admin.service';
+import { revalidateHomeSalons } from '@/lib/home-salon-cache';
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,6 +28,7 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     if (typeof body.reviewId !== 'string' || typeof body.status !== 'string') throw new Error('INVALID_INPUT');
     const review = await moderateReviewAsAdmin(currentUser, body.reviewId, body.status, typeof body.reason === 'string' ? body.reason.trim() : undefined);
+    revalidateHomeSalons();
     return NextResponse.json({ success: true, data: review });
   } catch (error) {
     const message = error instanceof Error && error.message === 'INVALID_INPUT' ? 'Invalid review moderation request' : 'Unable to moderate review';

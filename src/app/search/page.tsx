@@ -4,10 +4,12 @@ import { useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { Navbar, NavbarBrand, NavbarMenu, NavbarMenuItem, NavbarActions } from '@/components/navbar/Navbar';
+import NavbarAccountActions from '@/components/navbar/NavbarAccountActions';
 import { Footer, FooterSection, FooterLink } from '@/components/footer/Footer';
 import Logo from '@/components/navbar/Logo';
 import Button from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import Badge from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Loading';
 import { MapPin, Star, Search } from 'lucide-react';
 import { getSupportedLaunchCity } from '@/constants/launch-cities';
@@ -19,6 +21,7 @@ interface Salon {
   description?: string;
   rating?: number;
   reviewCount?: number;
+  isDemoPreview?: boolean;
   address?: {
     city?: string;
     area?: string;
@@ -89,16 +92,7 @@ function SearchPageContent() {
           <NavbarMenuItem href="/salon">For Business</NavbarMenuItem>
         </NavbarMenu>
         <NavbarActions>
-          <Link href="/login">
-            <Button variant="outline" size="sm">
-              Login
-            </Button>
-          </Link>
-          <Link href="/signup/choose">
-            <Button variant="primary" size="sm">
-              Sign Up
-            </Button>
-          </Link>
+          <NavbarAccountActions />
         </NavbarActions>
       </Navbar>
 
@@ -212,6 +206,7 @@ function SearchPageContent() {
                 <CardContent className="flex flex-1 flex-col gap-3 p-4">
                   <div>
                     <h3 className="font-semibold text-brand-black line-clamp-2">{salon.name}</h3>
+                    {salon.isDemoPreview && <Badge variant="info" className="mt-1">Demo preview</Badge>}
                     <p className="flex items-center gap-1 text-sm text-foreground-secondary mt-1">
                       <MapPin size={13} className="text-brand-pink" />
                       {salon.address?.area || salon.address?.city || 'Location'}
@@ -224,7 +219,7 @@ function SearchPageContent() {
                     </p>
                   )}
 
-                  {salon.rating !== undefined && salon.rating > 0 && (
+                  {!salon.isDemoPreview && salon.rating !== undefined && salon.rating > 0 && (
                     <div className="flex items-center gap-2 mt-2">
                       <div className="flex items-center gap-1 rounded-lg bg-neutral-50 px-2 py-1 text-sm font-semibold text-brand-black">
                         <Star size={13} className="fill-yellow-400 text-yellow-400" />
@@ -234,6 +229,9 @@ function SearchPageContent() {
                         <span className="text-xs text-foreground-secondary">
                           ({salon.reviewCount} reviews)
                         </span>
+                      )}
+                      {salon.isDemoPreview && (
+                        <p className="text-xs text-info-700">Illustrative listing; not a real salon.</p>
                       )}
                     </div>
                   )}
@@ -246,7 +244,7 @@ function SearchPageContent() {
                     </Link>
                     <Link href={`/salons/${salon.slug}?book=1`}>
                       <Button variant="primary" size="sm" className="w-full">
-                        Book Now
+                        {salon.isDemoPreview ? 'Preview booking flow' : 'Book Now'}
                       </Button>
                     </Link>
                   </div>

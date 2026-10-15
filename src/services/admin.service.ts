@@ -1,11 +1,12 @@
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import { connectDB } from '@/lib/db';
 import User from '@/models/User';
 import Salon from '@/models/Salon';
+import Service from '@/models/Service';
 import AuditLog from '@/models/AuditLog';
 import Barber from '@/models/Barber';
 import Booking from '@/models/Booking';
-import Review from '@/models/Review';
+import Review, { type IReview } from '@/models/Review';
 import Coupon from '@/models/Coupon';
 import { MembershipPlan, CustomerMembership } from '@/models/Membership';
 import { BOOKING_STATUS, PAYMENT_STATUS } from '@/constants/booking';
@@ -15,6 +16,7 @@ import type { AuthUser } from '@/types';
 import { recordAuditEvent } from '@/services/audit.service';
 import { normalizeSupportedSalonLocation, UNSUPPORTED_CITY_MESSAGE } from '@/constants/launch-cities';
 import { APPROVED_SALON_STATUS_FILTER } from '@/utils/salon-approval';
+import { refreshReviewRatingSummary } from '@/services/review-rating-summary.service';
 
 export class AdminInputError extends Error {
   constructor(message: string) {
@@ -109,7 +111,6 @@ export async function listUsers(options: {
       { email: { $regex: options.search, $options: 'i' } },
     ];
   }
-
   const [users, total] = await Promise.all([
     User.find(query).select('name phone email avatar role isActive isVerified notificationPreferences createdAt updatedAt').sort({ createdAt: -1 }).skip(skip).limit(limit),
     User.countDocuments(query),
@@ -159,6 +160,8 @@ export async function listSalonsForAdmin(options: {
       { 'address.area': { $regex: options.search, $options: 'i' } },
     ];
   }
+  const queryAnd = Array.isArray(query.$and) ? query.$and : [];
+  query.$and = [...queryAnd, { approvalStatus: { $ne: 'DRAFT' } }];
 
   const [salons, total] = await Promise.all([
     Salon.find(query)
@@ -178,9 +181,8 @@ export async function getSalonAdminDetails(salonId: string) {
 
   const [salon, history] = await Promise.all([
     Salon.findById(salonId)
+      .select('+aadhaarDocument +panDocument')
       .populate('owner', 'name phone email role isActive')
-      .populate('services', 'name description price duration category isActive')
-      .populate('barbers', 'name slug profileImage bio experienceYears specializations isVerified isActive')
       .populate('approvalUpdatedBy', 'name role'),
     AuditLog.find({ entityType: 'Salon', entityId: new Types.ObjectId(salonId) })
       .sort({ createdAt: -1 })
@@ -189,7 +191,31 @@ export async function getSalonAdminDetails(salonId: string) {
   ]);
 
   if (!salon) throw new Error('SALON_NOT_FOUND');
-  return { salon, history };
+  const [services, barbers] = await Promise.all([
+    Service.find({ salon: salon._id })
+      .select('name description price duration category isActive displayOrder')
+      .sort({ displayOrder: 1, name: 1 })
+      .maxTimeMS(5000)
+      .lean(),
+    Barber.find({ salon: salon._id })
+      .select('name title slug profileImage bio experienceYears specializations isVerified isActive')
+      .populate('user', 'name phone')
+      .sort({ name: 1 })
+      .maxTimeMS(5000)
+      .lean(),
+  ]);
+
+  const salonData = salon.toObject();
+  const { aadhaarDocument, panDocument, ...safeSalon } = salonData;
+  return {
+    salon: {
+      ...safeSalon,
+      identityDocuments: { aadhaar: Boolean(aadhaarDocument), pan: Boolean(panDocument) },
+      services,
+      barbers,
+    },
+    history,
+  };
 }
 
 export async function listBarbersForAdmin(options: { page?: number; limit?: number; search?: string; status?: string }) {
@@ -351,6 +377,7 @@ export async function updateSalonVerification(actor: AuthUser, salonId: string, 
   if (!isVerified && !reason?.trim()) throw new AdminInputError('A rejection reason is required');
   const salon = await Salon.findById(salonId);
   if (!salon) throw new Error('SALON_NOT_FOUND');
+  if (salon.approvalStatus === 'DRAFT') throw new Error('SALON_NOT_SUBMITTED');
   if (isVerified && !normalizeSupportedSalonLocation(salon.address.city, salon.address.state)) {
     throw new Error(`CITY_NOT_SUPPORTED: ${UNSUPPORTED_CITY_MESSAGE}`);
   }
@@ -393,7 +420,7 @@ export async function updateBarberVerification(actor: AuthUser, barberId: string
   const barber = await Barber.findById(barberId);
   if (!barber) throw new Error('BARBER_NOT_FOUND');
   barber.isVerified = isVerified;
-  barber.isActive = isVerified;
+  barber.isActive = isVerified && Boolean(barber.user);
   await barber.save();
   await recordAuditEvent({ actor, action: isVerified ? 'BARBER_APPROVED' : 'BARBER_REJECTED', entityType: 'Barber', entityId: barberId, metadata: reason ? { reason } : undefined });
   return barber;
@@ -403,12 +430,23 @@ export async function moderateReviewAsAdmin(actor: AuthUser, reviewId: string, s
   await connectDB();
   if (!Types.ObjectId.isValid(reviewId)) throw new AdminInputError('Invalid review id');
   if (!Object.values(REVIEW_STATUS).includes(status as (typeof REVIEW_STATUS)[keyof typeof REVIEW_STATUS])) throw new AdminInputError('Invalid review status');
-  const review = await Review.findById(reviewId);
-  if (!review) throw new Error('REVIEW_NOT_FOUND');
-  review.status = status;
-  await review.save();
+  const session = await mongoose.startSession();
+  let updatedReview: IReview | null = null;
+  try {
+    await session.withTransaction(async () => {
+      const review = await Review.findById(reviewId).session(session);
+      if (!review) throw new Error('REVIEW_NOT_FOUND');
+      review.status = status;
+      await review.save({ session });
+      await refreshReviewRatingSummary(review, session);
+      updatedReview = review;
+    });
+  } finally {
+    await session.endSession();
+  }
+  if (!updatedReview) throw new Error('REVIEW_NOT_FOUND');
   await recordAuditEvent({ actor, action: `REVIEW_${status}`, entityType: 'Review', entityId: reviewId, metadata: reason ? { reason } : undefined });
-  return review;
+  return updatedReview;
 }
 
 export async function createCouponAdmin(actor: AuthUser, input: Record<string, unknown>) {

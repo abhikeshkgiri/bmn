@@ -21,7 +21,9 @@ async function testAvailabilityReadDoesNotWrite() {
   const Leave = leaveModule.default || leaveModule;
   const originals = [];
   let updateManyCalls = 0;
+  let userLookupCalls = 0;
   let capturedBookingFilter;
+  let capturedBarberFilter;
 
   function stub(target, key, value) {
     originals.push([target, key, target[key]]);
@@ -47,12 +49,22 @@ async function testAvailabilityReadDoesNotWrite() {
   const salonId = new salonModuleId();
   const barberId = new salonModuleId();
   const serviceId = new salonModuleId();
-  stub(Barber, 'findOne', () => ({
-    select: async () => ({ services: [serviceId] }),
-  }));
-  stub(User, 'findOne', () => ({
-    select: async () => ({ _id: new salonModuleId() }),
-  }));
+  stub(Barber, 'findOne', (filter) => {
+    capturedBarberFilter = filter;
+    return {
+      select: async () => ({
+        services: [serviceId],
+        user: null,
+        isActive: true,
+        isVerified: false,
+        isAvailable: true,
+      }),
+    };
+  });
+  stub(User, 'findOne', () => {
+    userLookupCalls += 1;
+    throw new Error('Unlinked salon-managed barber must not require a User lookup');
+  });
   stub(Service, 'findById', async () => ({
     _id: serviceId,
     salon: salonId,
@@ -91,6 +103,10 @@ async function testAvailabilityReadDoesNotWrite() {
     );
 
     assert.equal(updateManyCalls, 0, 'availability must not update expired booking holds');
+    assert.equal(userLookupCalls, 0, 'availability must allow owner-managed barber profiles without a user account');
+    assert.equal(capturedBarberFilter.isActive, true);
+    assert.equal(capturedBarberFilter.isAvailable, true);
+    assert.ok(capturedBarberFilter.$or.some((branch) => branch.user === null));
     assert.ok(capturedBookingFilter.$or.some((branch) =>
       branch.status === 'PENDING' && branch.holdExpiresAt.$gt instanceof Date
     ));

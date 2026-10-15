@@ -89,7 +89,7 @@ export type BookingRescheduleInput = z.infer<typeof BookingRescheduleSchema>;
  */
 export const BookingStatusUpdateSchema = z.object({
   status: z.enum(BOOKING_STATUS_ARRAY as [string, ...string[]]),
-});
+}).strict();
 
 export type BookingStatusUpdateInput = z.infer<typeof BookingStatusUpdateSchema>;
 

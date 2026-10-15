@@ -9,6 +9,7 @@ import { verifyOtpAndGetUser, createSessionToken } from '@/services/auth.service
 import { SESSION_CONFIG } from '@/constants/auth';
 import { ZodError } from 'zod';
 import { getRequestIp, isRateLimited } from '@/lib/rate-limit';
+import { isDatabaseUnavailableError } from '@/lib/db-errors';
 
 export async function POST(request: NextRequest) {
   try {
@@ -63,6 +64,13 @@ export async function POST(request: NextRequest) {
 
     if (error instanceof Error) {
       const errorMessage = error.message;
+
+      if (isDatabaseUnavailableError(error)) {
+        return NextResponse.json(
+          { success: false, error: 'Database unavailable; sign-in could not be verified.' },
+          { status: 503 }
+        );
+      }
 
       // Check for specific errors
       if (

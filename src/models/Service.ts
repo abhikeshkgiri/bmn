@@ -12,6 +12,7 @@ interface IService extends Document {
   duration: number; // in minutes
   price: number; // in paise (INR * 100 for precision)
   discountPrice?: number; // in paise
+  displayOrder: number;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -69,6 +70,12 @@ const ServiceSchema = new Schema<IService>(
       type: Number,
       default: null,
       sparse: true,
+    },
+    displayOrder: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 10000,
     },
     isActive: {
       type: Boolean,

@@ -20,6 +20,7 @@ interface Barber {
   specializations: string[];
   rating: number;
   reviewCount: number;
+  isDemoPreview?: boolean;
   offersHomeService: boolean;
   isActive: boolean;
   salon?: {
@@ -190,7 +191,9 @@ export default function BarbersPage() {
                       </div>
 
                       {/* Rating */}
-                      {barber.rating > 0 && (
+                      {barber.isDemoPreview ? (
+                        <Badge variant="info">Demo preview</Badge>
+                      ) : barber.rating > 0 && (
                         <div className="flex items-center gap-1">
                           <Star size={16} className="fill-brand-pink text-brand-pink" />
                           <span className="text-sm font-medium text-foreground">

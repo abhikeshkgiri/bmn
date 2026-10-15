@@ -55,6 +55,14 @@ npm run dev
 Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
 On Windows, the project runner uses Next.js Webpack for development and production builds because Turbopack's native bindings may be unavailable on that platform.
 
+### Salon uploads
+
+Salon owners upload logo, cover, gallery, service, and barber images through the owner pages. Public images are stored under `public/uploads/<salon-name>-<salon-id>/` and served as salon image assets. Only JPG, PNG, and WebP images are accepted (8 MB maximum).
+
+Owner Aadhaar and PAN uploads are restricted to PDF, JPG, or PNG (10 MB maximum), encrypted at rest with AES-256-GCM, and stored outside `public/` under `private-uploads/`. Only the salon owner and administrators can download them through the authenticated document endpoint. Set `SALON_DOCUMENT_ENCRYPTION_KEY` in `.env.local` to a locally generated base64-encoded 32-byte key before uploading documents. Keep that key backed up securely: documents cannot be decrypted without it.
+
+Local disk storage is intended only for local development on a single persistent server. Do not deploy this storage setup to serverless or multi-instance production; use private object storage with access controls and retention policies instead. Upload folders and encryption keys are Git-ignored.
+
 ## Available Scripts
 
 - `npm run dev` - Start development server
@@ -231,8 +239,9 @@ The Salon Management system enables salon owners to create and manage their salo
 ```
 POST /api/salons
 Authorization: Required (SALON_OWNER, ADMIN, SUPER_ADMIN)
-Body: { name, address, location, contact, openingHours, facilities }
+Body: { name, salonType, description?, logo?, coverImage?, images?, address, location, contact, socialLinks?, openingHours, facilities? }
 Response: 201 Created { success, data: Salon }
+- Salon profiles are saved as inactive `DRAFT` records first; owners submit them for admin review after adding at least one active service and one barber profile
 ```
 
 **List Salons (Public)**
@@ -339,7 +348,7 @@ Response: 200 OK { success, data: Salon, message: "Verification updated" }
 - Input validation: Zod schema SalonCreateSchema
 - Ownership: Auto-assigned to authenticated user
 - Slug generation: Automatic unique slug from name
-- Status: Created as active (isActive=true, isVerified=false)
+- Status: Salon-owner profiles start inactive and unverified (`approvalStatus=DRAFT`); explicit owner submission moves a ready application to `PENDING`
 - Response: Full salon object with populated owner data
 
 **Read (GET)**
@@ -368,9 +377,11 @@ Response: 200 OK { success, data: Salon, message: "Verification updated" }
 {
   name: string,                    // Required, 3-100 chars
   slug: string,                    // Unique, auto-generated
+  salonType?: string,              // BARBERSHOP, MEN_SALON, WOMEN_SALON, UNISEX_SALON
   description?: string,            // Optional
   logo?: string,                   // Image URL
   coverImage?: string,             // Image URL
+  images?: string[],               // Ordered gallery image URLs
   owner: ObjectId,                 // References User
   staff?: ObjectId[],              // Array of User refs
   barbers?: ObjectId[],            // Array of Barber refs
@@ -394,6 +405,7 @@ Response: 200 OK { success, data: Salon, message: "Verification updated" }
     email?: string,
     website?: string
   },
+  socialLinks?: { instagram?: string, facebook?: string, youtube?: string },
   openingHours: {
     monday: { isOpen: boolean, openTime?: string, closeTime?: string },
     tuesday: { ... },
@@ -408,6 +420,8 @@ Response: 200 OK { success, data: Salon, message: "Verification updated" }
   updatedAt: Date
 }
 ```
+
+The salon-owner application at `/salon/onboarding` saves a `DRAFT`, then requires a review of persisted profile, service, and barber data before moving the application to `PENDING`. Owners can add their service and salon-managed barber profiles directly during onboarding or manage them from `/salon/services` and `/salon/barbers`; a barber account is not required. Active salon-managed barber profiles become publicly bookable when the salon is approved. Images are currently public HTTP/HTTPS URL references only; no file-upload storage integration is configured.
 
 ### UI Pages
 
@@ -762,7 +776,7 @@ Set `AUTH_DEV_MODE=true` in `.env.local` to enable development features:
 
 1. **Fixed Development OTP**: Use `123456` for all development testing (set in constants/auth.ts). The send-OTP response returns the development code for the UI to display.
 
-2. **Temporary in-memory fallback**: When `AUTH_DEV_MODE=true`, OTP login and customer signup can run without MongoDB or SMS. These development accounts and profile changes are stored only in process memory and are lost when the server restarts. Fallback-created accounts use the `CUSTOMER` role; this is not a substitute for database-backed role testing or persistent accounts.
+2. **Database-backed development sign-in**: When `AUTH_DEV_MODE=true`, the fixed development OTP is stored and verified through MongoDB and the user/session remain database-backed. SMS delivery is skipped, and the send-OTP response exposes the fixed code only in non-production mode. MongoDB must be configured and reachable; a database outage fails sign-in instead of creating a temporary in-memory identity.
 
 In production (`NODE_ENV=production`), all development features are disabled:
 - OTP is randomly generated and never logged

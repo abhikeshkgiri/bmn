@@ -22,6 +22,8 @@ import { Spinner } from '@/components/ui/Loading';
 import Logo from '@/components/navbar/Logo';
 import Badge from '@/components/ui/Badge';
 import { isValidIndianPhoneNumber } from '@/utils/phone';
+import { getDashboardPathForRole } from '@/utils/dashboard-route';
+import { USER_ROLES, type UserRole } from '@/constants/roles';
 
 type SignupStepType = 'phone' | 'otp';
 const OTP_LENGTH = 6;
@@ -130,20 +132,33 @@ export default function OtpSignupForm({ salonOwner = false }: { salonOwner?: boo
       const response = await fetch('/api/auth/verify-otp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, otp }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to verify OTP');
-      const role = result?.user?.role as string | undefined;
-      if (role === 'ADMIN' || role === 'SUPER_ADMIN') { router.replace('/admin'); return; }
-      if (role === 'SALON_OWNER') {
+      const sessionResponse = await fetch('/api/auth/me');
+      const sessionResult = await sessionResponse.json();
+      if (!sessionResponse.ok || !sessionResult.success || !sessionResult.user?.role) {
+        throw new Error(sessionResult?.error?.message || 'The verified account session could not be loaded.');
+      }
+      const role = sessionResult.user.role as UserRole;
+      const roleDashboard = getDashboardPathForRole(role);
+      if (roleDashboard === null) {
+        throw new Error('Salon staff dashboard access is not configured. Contact your salon administrator.');
+      }
+      if (role === USER_ROLES.ADMIN || role === USER_ROLES.SUPER_ADMIN) { router.replace('/admin'); return; }
+      if (role === USER_ROLES.SALON_OWNER) {
         const profileResponse = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), email: email.trim() || undefined }) });
-        if (!profileResponse.ok) throw new Error('Account created but profile setup failed');
-        router.replace(salonOwner ? '/salon/onboarding' : '/dashboard/salon');
+        const profileResult = await profileResponse.json();
+        if (!profileResponse.ok) throw new Error(profileResult?.error?.message || profileResult?.error || 'Account exists, but profile setup failed.');
+        router.replace(roleDashboard);
         return;
       }
-      if (role === 'SALON_STAFF') { router.replace('/dashboard/salon'); return; }
-      if (role === 'BARBER') { router.replace('/dashboard/barber'); return; }
+      if (role === USER_ROLES.SALON_STAFF) {
+        throw new Error('Salon staff dashboard access is not configured. Contact your salon administrator.');
+      }
+      if (role === USER_ROLES.BARBER) { router.replace(roleDashboard); return; }
       if (salonOwner) throw new Error('This phone number already belongs to a customer account. Sign in with that account or use a different number.');
       if (role !== 'CUSTOMER') throw new Error('This account cannot use customer signup.');
       const profileResponse = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), email: email.trim() || undefined }) });
-      if (!profileResponse.ok) throw new Error('Account created but profile setup failed');
+      const profileResult = await profileResponse.json();
+      if (!profileResponse.ok) throw new Error(profileResult?.error?.message || profileResult?.error || 'Account exists, but profile setup failed.');
       router.replace(nextPath);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to complete signup'); } finally { setLoading(false); }
   }

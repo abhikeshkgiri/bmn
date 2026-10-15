@@ -1,5 +1,5 @@
 export type SalonApprovalFields = {
-  approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
+  approvalStatus?: 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | null;
   isVerified: boolean;
 };
 

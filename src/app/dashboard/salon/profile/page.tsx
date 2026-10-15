@@ -8,18 +8,21 @@ import Button from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Loading';
 import { USER_ROLES } from '@/constants/roles';
-import { SALON_FACILITY_ARRAY } from '@/constants/services';
+import { SALON_FACILITY_ARRAY, SALON_TYPE_ARRAY } from '@/constants/services';
 import SupportedCitySelect from '@/components/location/SupportedCitySelect';
 import { isSupportedSalonLocation, SUPPORTED_LAUNCH_CITIES } from '@/constants/launch-cities';
+import SalonFileUpload from '@/components/salon/SalonFileUpload';
 
 type SalonFormState = {
   name: string;
+  salonType: string;
   description: string;
   logo: string;
   coverImage: string;
   images: string;
   facilities: string[];
   contact: { phone: string; email: string; website: string };
+  socialLinks: { instagram: string; facebook: string; youtube: string };
   address: {
     addressLine1: string;
     addressLine2: string;
@@ -38,6 +41,7 @@ type SalonProfilePayload = Partial<Omit<SalonFormState, 'contact' | 'address' | 
   images?: string[];
   contact?: Partial<SalonFormState['contact']>;
   address?: Partial<SalonFormState['address']>;
+  socialLinks?: Partial<SalonFormState['socialLinks']>;
   location?: { coordinates?: number[] };
   openingHours?: Partial<SalonFormState['openingHours']>;
   isActive?: boolean;
@@ -62,6 +66,7 @@ const defaultOpeningHours = Object.fromEntries(
 function toSalonForm(salon: SalonProfilePayload): SalonFormState {
   return {
     name: salon.name || '',
+    salonType: salon.salonType || '',
     description: salon.description || '',
     logo: salon.logo || '',
     coverImage: salon.coverImage || '',
@@ -71,6 +76,11 @@ function toSalonForm(salon: SalonProfilePayload): SalonFormState {
       phone: salon.contact?.phone || '',
       email: salon.contact?.email || '',
       website: salon.contact?.website || '',
+    },
+    socialLinks: {
+      instagram: salon.socialLinks?.instagram || '',
+      facebook: salon.socialLinks?.facebook || '',
+      youtube: salon.socialLinks?.youtube || '',
     },
     address: {
       addressLine1: salon.address?.addressLine1 || '',
@@ -107,12 +117,14 @@ export default function SalonProfilePage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [form, setForm] = useState<SalonFormState>({
     name: '',
+    salonType: '',
     description: '',
     logo: '',
     coverImage: '',
     images: '',
     facilities: [],
     contact: { phone: '', email: '', website: '' },
+    socialLinks: { instagram: '', facebook: '', youtube: '' },
     address: {
       addressLine1: '',
       addressLine2: '',
@@ -184,12 +196,14 @@ export default function SalonProfilePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: form.name,
+          salonType: form.salonType || undefined,
           description: form.description,
           logo: form.logo,
           coverImage: form.coverImage,
           images: form.images.split(/\r?\n/).map((image) => image.trim()).filter(Boolean),
           facilities: form.facilities,
           contact: form.contact,
+          socialLinks: form.socialLinks,
           address: form.address,
           location: {
             type: 'Point',
@@ -253,9 +267,11 @@ export default function SalonProfilePage() {
         {successMessage && <Card className="mb-4 p-4 text-green-800" role="status">{successMessage}</Card>}
         {salonStatus && (
           <Card className="mb-4 p-4">
-            <p className="font-medium">Approval status: {salonStatus.approvalStatus || (salonStatus.isVerified ? 'Legacy verified' : 'Pending review')}</p>
+            <p className="font-medium">Approval status: {salonStatus.approvalStatus === 'DRAFT' ? 'Draft — not submitted' : salonStatus.approvalStatus || (salonStatus.isVerified ? 'Legacy verified' : 'Pending review')}</p>
             <p className="mt-1 text-sm text-foreground-secondary">
-              {isPublic
+              {salonStatus.approvalStatus === 'DRAFT'
+                ? 'This draft has not been submitted for admin review yet.'
+                : isPublic
                 ? 'This profile is currently approved and published.'
                 : 'This profile is not currently published. Saving profile changes does not approve or publish it.'}
             </p>
@@ -271,6 +287,13 @@ export default function SalonProfilePage() {
                 <div>
                   <label htmlFor="salon-name" className="block text-sm font-medium mb-1">Salon name</label>
                   <Input id="salon-name" required minLength={3} maxLength={100} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                </div>
+                <div>
+                  <label htmlFor="salon-type" className="block text-sm font-medium mb-1">Salon type</label>
+                  <select id="salon-type" className="w-full rounded-lg border border-border bg-white px-3 py-2" value={form.salonType} onChange={(e) => setForm({ ...form, salonType: e.target.value })}>
+                    <option value="">Choose a type</option>
+                    {SALON_TYPE_ARRAY.map((type) => <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label htmlFor="salon-phone" className="block text-sm font-medium mb-1">Phone</label>
@@ -343,6 +366,17 @@ export default function SalonProfilePage() {
                   <Input id="salon-website" type="url" placeholder="https://" value={form.contact.website} onChange={(e) => setForm({ ...form, contact: { ...form.contact, website: e.target.value } })} />
                 </div>
               </div>
+              <div>
+                <h2 className="mb-3 text-lg font-semibold">Social links</h2>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  {(['instagram', 'facebook', 'youtube'] as const).map((network) => (
+                    <div key={network}>
+                      <label htmlFor={`salon-${network}`} className="block text-sm font-medium mb-1">{network[0].toUpperCase() + network.slice(1)}</label>
+                      <Input id={`salon-${network}`} type="url" placeholder="https://" value={form.socialLinks[network]} onChange={(e) => setForm({ ...form, socialLinks: { ...form.socialLinks, [network]: e.target.value } })} />
+                    </div>
+                  ))}
+                </div>
+              </div>
 
               <div>
                 <label htmlFor="salon-address" className="block text-sm font-medium mb-1">Address</label>
@@ -405,21 +439,44 @@ export default function SalonProfilePage() {
 
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">Photos and facilities</h2>
-                <p className="text-sm text-foreground-secondary">Enter publicly accessible HTTP or HTTPS image URLs. This form does not upload or store image files.</p>
+                <p className="text-sm text-foreground-secondary">Photos are uploaded to this salon&apos;s folder.</p>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
-                    <label htmlFor="salon-logo" className="block text-sm font-medium mb-1">Logo image URL</label>
-                    <Input id="salon-logo" type="url" placeholder="https://" value={form.logo} onChange={(e) => setForm({ ...form, logo: e.target.value })} />
+                    <SalonFileUpload kind="logo" label="Salon logo (JPG, PNG, WebP; max 8 MB)" accept="image/jpeg,image/png,image/webp" previewUrl={form.logo || undefined} onUploaded={(result) => { if (result.url) setForm((current) => ({ ...current, logo: result.url || '' })); }} />
                   </div>
                   <div>
-                    <label htmlFor="salon-cover" className="block text-sm font-medium mb-1">Cover image URL</label>
-                    <Input id="salon-cover" type="url" placeholder="https://" value={form.coverImage} onChange={(e) => setForm({ ...form, coverImage: e.target.value })} />
+                    <SalonFileUpload kind="cover" label="Salon cover photo (JPG, PNG, WebP; max 8 MB)" accept="image/jpeg,image/png,image/webp" previewUrl={form.coverImage || undefined} onUploaded={(result) => { if (result.url) setForm((current) => ({ ...current, coverImage: result.url || '' })); }} />
                   </div>
                 </div>
                 <div>
-                  <label htmlFor="salon-images" className="block text-sm font-medium mb-1">Additional image URLs</label>
-                  <textarea id="salon-images" value={form.images} onChange={(e) => setForm({ ...form, images: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 bg-white min-h-[100px]" aria-describedby="salon-images-help" />
-                  <p id="salon-images-help" className="mt-1 text-sm text-foreground-secondary">Use one URL per line, up to 20 images.</p>
+                  <p className="mb-2 text-sm text-foreground-secondary">Move photos to change their display order.</p>
+                  <div className="space-y-3">
+                    {form.images.split(/\r?\n/).map((image, index, images) => (
+                      <div key={`${index}-${image}`} className="flex flex-col gap-2 rounded-lg border border-border p-3 sm:flex-row sm:items-center">
+                        {image.trim() && <img src={image.trim()} alt={`Gallery preview ${index + 1}`} className="h-16 w-16 rounded object-cover" onError={(event) => { event.currentTarget.hidden = true; }} />}
+                        <SalonFileUpload kind="gallery" label={`Gallery photo ${index + 1} (JPG, PNG, WebP; max 8 MB)`} accept="image/jpeg,image/png,image/webp" previewUrl={image.trim() || undefined} onUploaded={(result) => {
+                          if (!result.url) return;
+                          const next = [...images];
+                          next[index] = result.url;
+                          setForm((current) => ({ ...current, images: next.join('\n') }));
+                        }} />
+                        <div className="flex gap-2">
+                          <Button type="button" variant="outline" disabled={index === 0} aria-label={`Move photo ${index + 1} up`} onClick={() => {
+                            const next = [...images];
+                            [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                            setForm({ ...form, images: next.join('\n') });
+                          }}>Up</Button>
+                          <Button type="button" variant="outline" disabled={index === images.length - 1} aria-label={`Move photo ${index + 1} down`} onClick={() => {
+                            const next = [...images];
+                            [next[index + 1], next[index]] = [next[index], next[index + 1]];
+                            setForm({ ...form, images: next.join('\n') });
+                          }}>Down</Button>
+                          <Button type="button" variant="outline" aria-label={`Remove photo ${index + 1}`} onClick={() => setForm({ ...form, images: images.filter((_, photoIndex) => photoIndex !== index).join('\n') })}>Remove</Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <Button type="button" variant="outline" className="mt-3" disabled={form.images.split(/\r?\n/).filter((image) => image.trim()).length >= 20} onClick={() => setForm({ ...form, images: [...form.images.split(/\r?\n/).filter((image) => image.trim()), ''].join('\n') })}>Add gallery photo</Button>
                 </div>
                 <fieldset>
                   <legend className="mb-2 text-sm font-medium">Facilities</legend>

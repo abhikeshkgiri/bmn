@@ -5,6 +5,7 @@ import { AdminConflictError, AdminInputError, listSalonsForAdmin, updateSalonVer
 import { SalonApprovalDecisionSchema } from '@/validations/admin-salon.schema';
 import type { AuthUser } from '@/types';
 import { ZodError } from 'zod';
+import { revalidateHomeSalons } from '@/lib/home-salon-cache';
 
 export async function GET(request: NextRequest) {
   let currentUser: AuthUser;
@@ -56,6 +57,7 @@ export async function PATCH(request: NextRequest) {
   try {
     const body = SalonApprovalDecisionSchema.parse(await request.json());
     const salon = await updateSalonVerification(currentUser, body.salonId, body.isVerified, body.reason);
+    revalidateHomeSalons();
     return NextResponse.json({ success: true, data: salon });
   } catch (error) {
     if (error instanceof ZodError || error instanceof SyntaxError) {
@@ -72,6 +74,9 @@ export async function PATCH(request: NextRequest) {
     }
     if (error instanceof Error && error.message === 'SALON_NOT_FOUND') {
       return NextResponse.json({ success: false, error: { code: 'SALON_NOT_FOUND', message: 'Salon application not found.' } }, { status: 404 });
+    }
+    if (error instanceof Error && error.message === 'SALON_NOT_SUBMITTED') {
+      return NextResponse.json({ success: false, error: { code: 'SALON_NOT_SUBMITTED', message: 'Draft applications cannot be approved or rejected.' } }, { status: 409 });
     }
     console.error('Admin salon decision failed:', error instanceof Error ? error.name : 'UnknownError');
     return NextResponse.json({ success: false, error: { code: 'ADMIN_SALON_UPDATE_FAILED', message: 'Unable to update salon approval. Please retry.' } }, { status: 500 });
