@@ -5,13 +5,13 @@
  * No TypeScript or path aliases
  */
 
-require('./scripts/test-db-bootstrap.cjs');
+require('../test-db-bootstrap.cjs');
 
 const fs = require('fs');
 const path = require('path');
 
 // Load .env.local manually
-const envPath = path.join(__dirname, '.env.local');
+const envPath = path.join(__dirname, '..', '..', '.env.local');
 if (!fs.existsSync(envPath)) {
   console.error('❌ .env.local not found');
   process.exit(1);

@@ -109,7 +109,9 @@ export default function OtpSignupForm({ salonOwner = false }: { salonOwner?: boo
   async function sendOtp(event: FormEvent) {
     event.preventDefault(); setError(''); setSuccess('');
     if (!name.trim() || name.trim().length < 2) return setError('Enter your name');
-    if (!email.trim() || !email.includes('@')) return setError('Enter a valid email address');
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      return setError('Enter a valid email address');
+    }
     if (!isValidIndianPhoneNumber(phone)) return setError('Enter a valid Indian mobile number');
     setLoading(true);
     try {
@@ -217,8 +219,8 @@ export default function OtpSignupForm({ salonOwner = false }: { salonOwner?: boo
                 <form onSubmit={sendOtp} className="animate-in fade-in slide-in-from-right-4 space-y-5 duration-300">
                   <div className="space-y-4">
                     <Input label="Name" value={name} onChange={(event) => setName(event.target.value)} required />
-                    <Input label="Email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-                    <Input label="Mobile number" type="tel" placeholder="9876543210 or +919876543210" value={phone} onChange={(event) => setPhone(event.target.value)} required disabled={loading} />
+                    <Input label="Email" type="email" maxLength={160} autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+                    <Input label="Mobile number" type="tel" placeholder="10-digit mobile number" value={phone} onChange={(event) => setPhone(event.target.value)} required disabled={loading} />
                   </div>
                   <Button type="submit" variant="primary" fullWidth disabled={loading}>{loading ? <Spinner size="sm" /> : <span className="flex items-center justify-center gap-2">Send OTP <ArrowRight size={18} /></span>}</Button>
                 </form>

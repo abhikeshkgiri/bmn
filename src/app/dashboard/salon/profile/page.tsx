@@ -8,6 +8,7 @@ import Button from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Loading';
 import { USER_ROLES } from '@/constants/roles';
+import { getPhoneDigits } from '@/utils/phone';
 import { SALON_FACILITY_ARRAY, SALON_TYPE_ARRAY } from '@/constants/services';
 import SupportedCitySelect from '@/components/location/SupportedCitySelect';
 import { isSupportedSalonLocation, SUPPORTED_LAUNCH_CITIES } from '@/constants/launch-cities';
@@ -73,7 +74,7 @@ function toSalonForm(salon: SalonProfilePayload): SalonFormState {
     images: (salon.images || []).join('\n'),
     facilities: salon.facilities || [],
     contact: {
-      phone: salon.contact?.phone || '',
+      phone: salon.contact?.phone ? getPhoneDigits(salon.contact.phone) : '',
       email: salon.contact?.email || '',
       website: salon.contact?.website || '',
     },
@@ -297,7 +298,7 @@ export default function SalonProfilePage() {
                 </div>
                 <div>
                   <label htmlFor="salon-phone" className="block text-sm font-medium mb-1">Phone</label>
-                  <Input id="salon-phone" required value={form.contact.phone} onChange={(e) => setForm({ ...form, contact: { ...form.contact, phone: e.target.value } })} />
+                  <Input id="salon-phone" type="tel" required value={form.contact.phone} onChange={(e) => setForm({ ...form, contact: { ...form.contact, phone: e.target.value } })} />
                 </div>
               </div>
 
@@ -359,7 +360,7 @@ export default function SalonProfilePage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label htmlFor="salon-email" className="block text-sm font-medium mb-1">Email</label>
-                  <Input id="salon-email" type="email" value={form.contact.email} onChange={(e) => setForm({ ...form, contact: { ...form.contact, email: e.target.value } })} />
+                  <Input id="salon-email" type="email" maxLength={160} autoComplete="email" value={form.contact.email} onChange={(e) => setForm({ ...form, contact: { ...form.contact, email: e.target.value } })} />
                 </div>
                 <div>
                   <label htmlFor="salon-website" className="block text-sm font-medium mb-1">Website</label>

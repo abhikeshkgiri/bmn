@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { LogOut, UserRound } from 'lucide-react';
-import Button from '@/components/ui/Button';
+import Button, { ButtonLink } from '@/components/ui/Button';
 import type { UserRole } from '@/constants/roles';
 import { getDashboardPathForRole } from '@/utils/dashboard-route';
 
@@ -97,12 +97,8 @@ export default function NavbarAccountActions() {
   if (!user) {
     return (
       <>
-        <Link href="/login">
-          <Button variant="outline" size="sm">Login</Button>
-        </Link>
-        <Link href="/signup/choose">
-          <Button variant="primary" size="sm">Sign Up</Button>
-        </Link>
+        <ButtonLink href="/login" variant="outline" size="sm">Login</ButtonLink>
+        <ButtonLink href="/signup/choose" variant="primary" size="sm">Sign Up</ButtonLink>
       </>
     );
   }

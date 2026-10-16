@@ -51,7 +51,6 @@ function testCriticalIndexes(): void {
 
 async function testOtpAttemptAndConsumptionAreAtomic(): Promise<void> {
   const db = require('../src/lib/db') as { connectDB: () => Promise<unknown> };
-  const devAuthStore = require('../src/lib/dev-auth-store') as Record<string, unknown>;
   const otpModel = OtpVerification as unknown as Record<string, unknown>;
   const userModel = User as unknown as Record<string, unknown>;
   const originals: Array<() => void> = [];
@@ -66,7 +65,6 @@ async function testOtpAttemptAndConsumptionAreAtomic(): Promise<void> {
 
   try {
     stub(db as unknown as Record<string, unknown>, 'connectDB', async () => undefined);
-    stub(devAuthStore, 'shouldUseDevAuthFallback', () => false);
     const record = {
       _id: 'otp-record',
       expiresAt: new Date(Date.now() + 60_000),
@@ -122,6 +120,18 @@ async function testOtpAttemptAndConsumptionAreAtomic(): Promise<void> {
     assert.ok((consumeFilter.expiresAt as { $gt: Date }).$gt instanceof Date);
     assert.deepEqual(consumeFilter.attempts, { $lt: OTP_CONFIG.MAX_ATTEMPTS });
     assert.deepEqual(consumeUpdate, { $set: { verified: true } });
+
+    stub(userModel, 'findOne', async () => null);
+    let createdUnexpectedUser = false;
+    stub(userModel, 'create', async () => {
+      createdUnexpectedUser = true;
+      throw new Error('Login verification must not create an account');
+    });
+    await assert.rejects(
+      verifyOtpAndGetUser('+911234567890', '123456', false),
+      /ACCOUNT_NOT_FOUND/,
+    );
+    assert.equal(createdUnexpectedUser, false);
 
     stub(otpModel, 'updateOne', async () => ({ modifiedCount: 0 }));
     await assert.rejects(

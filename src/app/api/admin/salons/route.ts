@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminAccess } from '@/lib/admin';
 import { requireAuth } from '@/lib/auth';
-import { AdminConflictError, AdminInputError, listSalonsForAdmin, updateSalonVerification } from '@/services/admin.service';
-import { SalonApprovalDecisionSchema } from '@/validations/admin-salon.schema';
+import { AdminConflictError, AdminInputError, listSalonsForAdmin, updateSalonStatusAsAdmin, updateSalonVerification } from '@/services/admin.service';
+import { AdminSalonStatusSchema, SalonApprovalDecisionSchema } from '@/validations/admin-salon.schema';
 import type { AuthUser } from '@/types';
 import { ZodError } from 'zod';
 import { revalidateHomeSalons } from '@/lib/home-salon-cache';
@@ -55,7 +55,15 @@ export async function PATCH(request: NextRequest) {
   }
 
   try {
-    const body = SalonApprovalDecisionSchema.parse(await request.json());
+    const payload: unknown = await request.json();
+    if (payload && typeof payload === 'object' && 'action' in payload && payload.action === 'status') {
+      const body = AdminSalonStatusSchema.parse(payload);
+      const salon = await updateSalonStatusAsAdmin(currentUser, body.salonId, body.isActive);
+      revalidateHomeSalons();
+      return NextResponse.json({ success: true, data: salon });
+    }
+
+    const body = SalonApprovalDecisionSchema.parse(payload);
     const salon = await updateSalonVerification(currentUser, body.salonId, body.isVerified, body.reason);
     revalidateHomeSalons();
     return NextResponse.json({ success: true, data: salon });
@@ -64,7 +72,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ success: false, error: { code: 'INVALID_INPUT', message: 'Invalid salon approval request.' } }, { status: 400 });
     }
     if (error instanceof AdminConflictError) {
-      return NextResponse.json({ success: false, error: { code: 'SALON_APPROVAL_CONFLICT', message: error.message } }, { status: 409 });
+      return NextResponse.json({ success: false, error: { code: 'SALON_UPDATE_CONFLICT', message: error.message } }, { status: 409 });
     }
     if (error instanceof Error && error.message.startsWith('CITY_NOT_SUPPORTED:')) {
       return NextResponse.json({ success: false, error: { code: 'CITY_NOT_SUPPORTED', message: error.message.split(':').slice(1).join(':').trim() } }, { status: 422 });

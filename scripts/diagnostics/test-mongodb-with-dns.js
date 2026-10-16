@@ -4,7 +4,7 @@
  * Uses Google DNS (8.8.8.8) to bypass local DNS issues
  */
 
-require('./scripts/test-db-bootstrap.cjs');
+require('../test-db-bootstrap.cjs');
 
 const fs = require('fs');
 const path = require('path');
@@ -14,7 +14,7 @@ const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 // Load .env.local
-const envPath = path.join(__dirname, '.env.local');
+const envPath = path.join(__dirname, '..', '..', '.env.local');
 const envContent = fs.readFileSync(envPath, 'utf-8');
 const envVars = {};
 envContent.split('\n').forEach((line) => {

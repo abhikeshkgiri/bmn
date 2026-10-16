@@ -7,8 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Loading';
-import SupportedCitySelect from '@/components/location/SupportedCitySelect';
-import { SUPPORTED_LAUNCH_CITIES } from '@/constants/launch-cities';
 import { SALON_FACILITY_ARRAY, SALON_TYPE_ARRAY } from '@/constants/services';
 import SalonApplicationRequirements from '@/components/salon/SalonApplicationRequirements';
 import SalonFileUpload, { type SalonUploadResult } from '@/components/salon/SalonFileUpload';
@@ -113,8 +111,8 @@ export default function SalonOnboardingPage() {
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState('');
   const [salon, setSalon] = useState<SalonStatus | null>(null);
-  const [aadhaarUploadToken, setAadhaarUploadToken] = useState('');
-  const [panUploadToken, setPanUploadToken] = useState('');
+  const [postalLookupStatus, setPostalLookupStatus] = useState<'idle' | 'loading' | 'matched' | 'unsupported' | 'error'>('idle');
+  const [postalLookupMessage, setPostalLookupMessage] = useState('');
   const [form, setForm] = useState<OnboardingForm>({
     name: '',
     salonType: '',
@@ -185,6 +183,50 @@ export default function SalonOnboardingPage() {
     return () => window.clearTimeout(timeout);
   }, [loadOnboarding]);
 
+  useEffect(() => {
+    if (form.postalCode.length !== 6) return;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setPostalLookupStatus('loading');
+      setPostalLookupMessage('');
+      try {
+        const response = await fetch(`/api/location/pincode?postalCode=${encodeURIComponent(form.postalCode)}`, {
+          signal: controller.signal,
+        });
+        const result = await response.json() as {
+          success?: boolean;
+          data?: { city?: string; state?: string; supported?: boolean };
+          error?: { message?: string };
+        };
+        if (!response.ok || !result.success || !result.data) {
+          throw new Error(result.error?.message || 'Unable to look up this PIN code.');
+        }
+        setForm((current) => ({
+          ...current,
+          city: result.data?.city || '',
+          state: result.data?.state || '',
+        }));
+        if (result.data.supported) {
+          setPostalLookupStatus('matched');
+          setPostalLookupMessage(`Detected ${result.data.city}, ${result.data.state}.`);
+        } else {
+          setPostalLookupStatus('unsupported');
+          setPostalLookupMessage(`State detected: ${result.data.state}. Salon onboarding is not available for this PIN code yet.`);
+        }
+      } catch (reason) {
+        if (controller.signal.aborted) return;
+        setPostalLookupStatus('error');
+        setPostalLookupMessage(reason instanceof Error ? reason.message : 'Unable to look up this PIN code.');
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [form.postalCode]);
+
   const submitSalon = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!reviewing) {
@@ -201,8 +243,6 @@ export default function SalonOnboardingPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          aadhaarUploadToken,
-          panUploadToken,
           name: form.name.trim(),
           salonType: form.salonType,
           slug,
@@ -252,6 +292,7 @@ export default function SalonOnboardingPage() {
       }
       if (!isSalonStatus(result.data)) throw new Error('The server response did not confirm the salon status. Refresh the page to check.');
       setSalon(result.data);
+      setReviewing(false);
       await loadOnboarding();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Failed to save salon draft.');
@@ -285,12 +326,7 @@ export default function SalonOnboardingPage() {
     }
   };
 
-  const handleIdentityUpload = (kind: 'aadhaar' | 'pan', result: SalonUploadResult) => {
-    const tokenSetter = kind === 'aadhaar' ? setAadhaarUploadToken : setPanUploadToken;
-    if (result.uploadToken) {
-      tokenSetter(result.uploadToken);
-      return;
-    }
+  const handleIdentityUpload = (result: SalonUploadResult) => {
     if (result.uploaded) void loadOnboarding();
   };
 
@@ -303,7 +339,7 @@ export default function SalonOnboardingPage() {
       <div className="mx-auto max-w-3xl space-y-6">
         <header>
           <p className="text-sm font-semibold uppercase tracking-wide text-brand-pink">Salon Owner</p>
-          <h1 className="mt-2 text-3xl font-bold text-foreground">{salon ? 'Salon application status' : reviewing ? 'Review salon application' : 'Create your salon profile'}</h1>
+          <h1 className="mt-2 text-3xl font-bold text-foreground">{salon?.approvalStatus === 'DRAFT' ? reviewing ? 'Review salon application' : 'Complete your salon application' : salon ? 'Salon application status' : reviewing ? 'Review salon details' : 'Create your salon profile'}</h1>
           <p className="mt-2 text-foreground-secondary">Complete and review your actual salon details before submitting for administrator review. Only approved, active salons in supported cities appear publicly.</p>
         </header>
 
@@ -364,30 +400,60 @@ export default function SalonOnboardingPage() {
                   <ul className="mt-1 list-inside list-disc text-sm text-amber-900">{salon.readiness.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>
                 ) : <p className="text-sm text-amber-900">The saved application meets the current submission requirements.</p>}
               </section>
+              <div className="flex flex-wrap gap-3">
+                <Button type="button" variant="outline" disabled={saving} onClick={() => setReviewing(false)}>Back to checklist</Button>
+                <Button type="button" variant="primary" disabled={saving || !salon.readiness || Boolean(salon.readiness.blockers.length)} onClick={() => void submitSavedSalon()}>{saving ? <Spinner size="sm" /> : 'Submit for admin review'}</Button>
+                <Button type="button" variant="outline" disabled={saving} onClick={() => void loadOnboarding()}>Refresh saved details</Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : salon?.approvalStatus === 'DRAFT' ? (
+          <Card>
+            <CardHeader><CardTitle>{salon.name} · Services and barber team</CardTitle></CardHeader>
+            <CardContent className="space-y-5">
+              <p className="text-sm text-foreground-secondary">
+                Your salon details are saved as a draft. Add a service, then add a barber and select the services they offer. When both steps are complete, review the full profile and submit it to the administrator.
+              </p>
+              <SalonApplicationRequirements
+                salonId={salon._id}
+                services={salon.services ?? []}
+                barbers={salon.barbers ?? []}
+                activeServiceCount={salon.readiness?.activeServiceCount ?? 0}
+                barberProfileCount={salon.readiness?.barberProfileCount ?? 0}
+                onSaved={loadOnboarding}
+              />
               <section className="grid gap-4 rounded-lg border border-border p-4 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <h3 className="font-semibold">Owner identity documents</h3>
+                  <p className="mt-1 text-sm text-foreground-secondary">Upload Aadhaar and PAN here. Both are required before the application can be submitted for review.</p>
+                </div>
                 <SalonFileUpload
                   kind="aadhaar"
                   label="Salon owner Aadhaar (PDF, JPG, PNG; max 10 MB)"
                   accept="application/pdf,image/jpeg,image/png"
                   currentUploaded={salon.identityDocuments?.aadhaar}
-                  onUploaded={(result) => handleIdentityUpload('aadhaar', result)}
+                  required
+                  onUploaded={handleIdentityUpload}
                 />
                 <SalonFileUpload
                   kind="pan"
                   label="Salon owner PAN (PDF, JPG, PNG; max 10 MB)"
                   accept="application/pdf,image/jpeg,image/png"
                   currentUploaded={salon.identityDocuments?.pan}
-                  onUploaded={(result) => handleIdentityUpload('pan', result)}
+                  required
+                  onUploaded={handleIdentityUpload}
                 />
                 {salon.identityDocuments?.aadhaar && <a className="text-sm font-medium text-brand-pink underline" href="/api/salon/onboarding/documents?kind=aadhaar">Download saved Aadhaar</a>}
                 {salon.identityDocuments?.pan && <a className="text-sm font-medium text-brand-pink underline" href="/api/salon/onboarding/documents?kind=pan">Download saved PAN</a>}
-                <p className="text-xs text-foreground-secondary sm:col-span-2">Identity documents are encrypted in private local storage and visible only to the salon owner and administrators.</p>
+                <p className="text-xs text-foreground-secondary sm:col-span-2">Identity documents are encrypted in private storage and visible only to the salon owner and administrators.</p>
               </section>
-              <div className="flex flex-wrap gap-3">
-                <Button type="button" variant="outline" disabled={saving} onClick={() => setReviewing(false)}>Back to checklist</Button>
-                <Button type="button" variant="primary" disabled={saving || !salon.readiness || Boolean(salon.readiness.blockers.length)} onClick={() => void submitSavedSalon()}>{saving ? <Spinner size="sm" /> : 'Submit for admin review'}</Button>
-                <Button type="button" variant="outline" disabled={saving} onClick={() => void loadOnboarding()}>Refresh saved details</Button>
-              </div>
+              {!salon.readiness ? (
+                <p className="text-sm text-amber-800">Readiness checks are unavailable. Refresh to try again.</p>
+              ) : salon.readiness.activeServiceCount < 1 || salon.readiness.barberProfileCount < 1 ? (
+                <p className="text-sm text-amber-800">{salon.readiness.blockers.filter((blocker) => !blocker.includes('Aadhaar') && !blocker.includes('PAN')).join(' ')}</p>
+              ) : (
+                <Button type="button" variant="primary" onClick={() => setReviewing(true)}>Review profile and submit for admin review</Button>
+              )}
             </CardContent>
           </Card>
         ) : salon ? (
@@ -428,32 +494,14 @@ export default function SalonOnboardingPage() {
                 <Link href="/dashboard/salon"><Button variant="primary">Salon dashboard</Button></Link>
                 <Button variant="outline" onClick={() => void loadOnboarding()}>Refresh status</Button>
               </div>
-              <p className="text-sm text-foreground-secondary">
-                {approvalStatus === 'DRAFT'
-                  ? 'Complete the identity document, service, and barber requirements below before submitting. Owner-managed barber profiles do not need separate accounts.'
-                  : 'Owner-managed barber profiles do not need separate accounts.'}
-              </p>
-              {approvalStatus === 'DRAFT' && (
-                <div className="space-y-2 border-t border-border pt-4">
-                  <SalonApplicationRequirements
-                    salonId={salon._id}
-                    services={salon.services ?? []}
-                    barbers={salon.barbers ?? []}
-                    activeServiceCount={salon.readiness?.activeServiceCount ?? 0}
-                    barberProfileCount={salon.readiness?.barberProfileCount ?? 0}
-                    onSaved={loadOnboarding}
-                  />
-                  {!salon.readiness ? <p className="text-sm text-amber-800">Readiness checks are unavailable. Refresh to try again.</p> : salon.readiness.blockers.length ? <p className="text-sm text-amber-800">{salon.readiness.blockers.join(' ')}</p> : null}
-                  <Button type="button" variant="primary" disabled={!salon.readiness || Boolean(salon.readiness.blockers.length)} onClick={() => setReviewing(true)}>Review and submit application</Button>
-                </div>
-              )}
+              <p className="text-sm text-foreground-secondary">Owner-managed barber profiles do not need separate accounts.</p>
             </CardContent>
           </Card>
         ) : (
           <form onSubmit={submitSalon}>
             {reviewing ? (
               <Card>
-                <CardHeader><CardTitle>Review profile before saving a draft</CardTitle></CardHeader>
+                <CardHeader><CardTitle>Review salon details</CardTitle></CardHeader>
                 <CardContent className="space-y-4">
                   <div>
                     <h2 className="font-semibold">{form.name} · {form.salonType.replace(/_/g, ' ')}</h2>
@@ -478,11 +526,10 @@ export default function SalonOnboardingPage() {
                     {form.coverImage && <img src={form.coverImage} alt="Salon cover preview" className="h-20 w-32 rounded object-cover" onError={(event) => { event.currentTarget.hidden = true; }} />}
                     {form.images.filter((image) => image.trim()).map((image, index) => <img key={`${index}-${image}`} src={image} alt={`Salon gallery preview ${index + 1}`} className="h-20 w-32 rounded object-cover" onError={(event) => { event.currentTarget.hidden = true; }} />)}
                   </div>
-                  <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">First save your salon details as a draft. The service and barber forms will then appear below on this same page, so you can complete the application without navigating away. Photos are uploaded into a folder for this salon.</p>
-                  {(!aadhaarUploadToken || !panUploadToken) && <p role="alert" className="text-sm text-error-700">Upload both the salon owner&apos;s Aadhaar and PAN documents before saving.</p>}
+                  <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Save these details as a draft to unlock the service and barber steps on this page. Add a barber after saving a service, then assign the barber to that service before submitting for review.</p>
                   <div className="flex flex-wrap gap-3">
                     <Button type="button" variant="outline" disabled={saving} onClick={() => setReviewing(false)}>Back to edit</Button>
-                    <Button type="submit" variant="primary" disabled={saving || !aadhaarUploadToken || !panUploadToken}>{saving ? <Spinner size="sm" /> : 'Save salon details and continue'}</Button>
+                    <Button type="submit" variant="primary" disabled={saving}>{saving ? <Spinner size="sm" /> : 'Save draft and continue to services'}</Button>
                   </div>
                 </CardContent>
               </Card>
@@ -505,7 +552,7 @@ export default function SalonOnboardingPage() {
                     </label>
                     <div className="grid gap-4 sm:grid-cols-2">
                       <Input label="Salon phone" type="tel" required value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
-                      <Input label="Salon email (optional)" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+                      <Input label="Salon email (optional)" type="email" maxLength={160} autoComplete="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
                       <Input label="Website (optional)" type="url" placeholder="https://" value={form.website} onChange={(event) => setForm({ ...form, website: event.target.value })} />
                       <SalonFileUpload kind="logo" label="Salon logo (optional; JPG, PNG, WebP; max 8 MB)" accept="image/jpeg,image/png,image/webp" previewUrl={form.logo || undefined} onUploaded={(result) => { if (result.url) setForm((current) => ({ ...current, logo: result.url || '' })); }} />
                       <SalonFileUpload kind="cover" label="Salon cover photo (optional; JPG, PNG, WebP; max 8 MB)" accept="image/jpeg,image/png,image/webp" previewUrl={form.coverImage || undefined} onUploaded={(result) => { if (result.url) setForm((current) => ({ ...current, coverImage: result.url || '' })); }} />
@@ -525,11 +572,32 @@ export default function SalonOnboardingPage() {
                       <Input label="Address line 2 (optional)" value={form.addressLine2} onChange={(event) => setForm({ ...form, addressLine2: event.target.value })} />
                       <Input label="Area / locality" value={form.area} onChange={(event) => setForm({ ...form, area: event.target.value })} />
                       <Input label="Landmark (optional)" value={form.landmark} onChange={(event) => setForm({ ...form, landmark: event.target.value })} />
-                      <Input label="Postal code" required minLength={3} maxLength={12} value={form.postalCode} onChange={(event) => setForm({ ...form, postalCode: event.target.value })} />
+                      <Input
+                        label="Postal code"
+                        required
+                        inputMode="numeric"
+                        pattern="[0-9]{6}"
+                        maxLength={6}
+                        value={form.postalCode}
+                        onChange={(event) => {
+                          setPostalLookupStatus('idle');
+                          setPostalLookupMessage('');
+                          setForm((current) => ({
+                            ...current,
+                            postalCode: event.target.value.replace(/\D/g, '').slice(0, 6),
+                            city: '',
+                            state: '',
+                          }));
+                        }}
+                      />
                     </div>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <SupportedCitySelect value={form.city} state={form.state} label="Launch city" required onChange={(location) => setForm({ ...form, city: location.city, state: location.state })} />
-                      <Input label="State / UT" value={SUPPORTED_LAUNCH_CITIES.find((location) => location.city === form.city)?.state || form.state} readOnly />
+                    <div className="space-y-1">
+                      <Input label="State / UT (detected from PIN code)" value={form.state} readOnly />
+                      {postalLookupMessage && (
+                        <p role={postalLookupStatus === 'error' || postalLookupStatus === 'unsupported' ? 'alert' : 'status'} className={`text-sm ${postalLookupStatus === 'error' || postalLookupStatus === 'unsupported' ? 'text-error-700' : 'text-foreground-secondary'}`}>
+                          {postalLookupStatus === 'loading' ? 'Detecting your location…' : postalLookupMessage}
+                        </p>
+                      )}
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2">
                       <Input label="Latitude" type="number" min="-90" max="90" step="any" required value={form.latitude} onChange={(event) => setForm({ ...form, latitude: event.target.value })} />
@@ -541,11 +609,6 @@ export default function SalonOnboardingPage() {
                 <Card>
                   <CardHeader><CardTitle>Photos, facilities and hours</CardTitle></CardHeader>
                   <CardContent className="space-y-5">
-                    <section className="grid gap-4 rounded-lg border border-border p-4 sm:grid-cols-2">
-                      <SalonFileUpload kind="aadhaar" label="Salon owner Aadhaar (required; PDF, JPG, PNG; max 10 MB)" accept="application/pdf,image/jpeg,image/png" required onUploaded={(result) => handleIdentityUpload('aadhaar', result)} />
-                      <SalonFileUpload kind="pan" label="Salon owner PAN (required; PDF, JPG, PNG; max 10 MB)" accept="application/pdf,image/jpeg,image/png" required onUploaded={(result) => handleIdentityUpload('pan', result)} />
-                      <p className="text-xs text-foreground-secondary sm:col-span-2">Your ID documents are encrypted and kept outside public files. Only you and administrators can access them.</p>
-                    </section>
                     <div className="space-y-3">
                       {form.images.map((image, index) => (
                         <div key={`${index}-${image}`} className="flex flex-col gap-2 rounded-lg border border-border p-3 sm:flex-row sm:items-center">
@@ -594,7 +657,7 @@ export default function SalonOnboardingPage() {
                         ))}
                       </div>
                     </div>
-                    <Button type="submit" variant="primary" disabled={saving || !form.city}>Review profile and save draft</Button>
+                    <Button type="submit" variant="primary" disabled={saving || !form.city || postalLookupStatus === 'loading'}>Review profile</Button>
                   </CardContent>
                 </Card>
               </div>

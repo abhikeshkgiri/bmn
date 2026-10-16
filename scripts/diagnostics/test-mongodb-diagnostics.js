@@ -4,14 +4,14 @@
  * Tests with longer timeouts and detailed error reporting
  */
 
-require('./scripts/test-db-bootstrap.cjs');
+require('../test-db-bootstrap.cjs');
 
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
 
 // Load .env.local
-const envPath = path.join(__dirname, '.env.local');
+const envPath = path.join(__dirname, '..', '..', '.env.local');
 const envContent = fs.readFileSync(envPath, 'utf-8');
 const envVars = {};
 envContent.split('\n').forEach((line) => {

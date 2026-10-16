@@ -1,9 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { ArrowRight, Store, UserRound } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
-import Button from '@/components/ui/Button';
+import Button, { ButtonLink } from '@/components/ui/Button';
 
 interface RoleSelectionProps {
   mode: 'login' | 'signup';
@@ -64,13 +63,14 @@ export default function RoleSelection({ mode, onSelect }: RoleSelectionProps) {
                   Continue <ArrowRight size={16} className="ml-2" />
                 </Button>
               ) : (
-                <Link
+                <ButtonLink
                   href={id === 'salonOwner' ? '/salon/signup' : '/signup'}
-                  className="mt-4 inline-flex items-center justify-center rounded-lg border border-brand-pink bg-[#FF568D] px-4 py-2.5 font-medium text-white shadow-sm transition-colors hover:bg-brand-pink-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-pink"
+                  variant="primary"
+                  className="mt-4"
                 >
                     {id === 'salonOwner' ? 'Register a Salon' : 'Create Customer Account'}
                     <ArrowRight size={16} className="ml-2" />
-                </Link>
+                </ButtonLink>
               )}
             </div>
           </div>

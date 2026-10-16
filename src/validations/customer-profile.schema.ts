@@ -37,7 +37,10 @@ export const CustomerProfileUpdateSchema = z.object({
 export const CustomerAddressSchema = z.object({
   label: z.string().trim().min(1).max(40),
   name: z.string().trim().min(2).max(100),
-  phone: z.string().trim().max(20).optional(),
+  phone: z.union([
+    z.string().trim().regex(/^[6-9]\d{9}$/, 'Phone number must be exactly 10 digits'),
+    z.literal(''),
+  ]).optional(),
   addressLine1: z.string().trim().min(2).max(200),
   addressLine2: z.string().trim().max(200).optional(),
   area: z.string().trim().max(100).optional(),

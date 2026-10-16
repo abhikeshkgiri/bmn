@@ -3,10 +3,6 @@
 import { useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
-import { Navbar, NavbarBrand, NavbarMenu, NavbarMenuItem, NavbarActions } from '@/components/navbar/Navbar';
-import NavbarAccountActions from '@/components/navbar/NavbarAccountActions';
-import { Footer, FooterSection, FooterLink } from '@/components/footer/Footer';
-import Logo from '@/components/navbar/Logo';
 import Button from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
@@ -78,24 +74,6 @@ function SearchPageContent() {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Navbar */}
-      <Navbar>
-        <NavbarBrand>
-          <Logo size="md" />
-        </NavbarBrand>
-        <NavbarMenu>
-          <NavbarMenuItem href="/search">Search</NavbarMenuItem>
-          <NavbarMenuItem href="/salons?location=1">Location</NavbarMenuItem>
-          <NavbarMenuItem href="/salons">Salons</NavbarMenuItem>
-          <NavbarMenuItem href="/services">Services</NavbarMenuItem>
-          <NavbarMenuItem href="/offers">Offers</NavbarMenuItem>
-          <NavbarMenuItem href="/salon">For Business</NavbarMenuItem>
-        </NavbarMenu>
-        <NavbarActions>
-          <NavbarAccountActions />
-        </NavbarActions>
-      </Navbar>
-
       <main className="mx-auto max-w-7xl px-4 py-12">
         {/* Header */}
         <div className="mb-12">
@@ -255,44 +233,6 @@ function SearchPageContent() {
         )}
       </main>
 
-      {/* Footer */}
-      <Footer className="mt-16">
-        <FooterSection>
-          <h4 className="font-semibold text-foreground">Product</h4>
-          <FooterLink href="/salons">Find Salons</FooterLink>
-          <FooterLink href="/barbers">Find Barbers</FooterLink>
-          <FooterLink href="/services">Services</FooterLink>
-          <FooterLink href="/offers">Offers & Deals</FooterLink>
-        </FooterSection>
-        <FooterSection>
-          <h4 className="font-semibold text-foreground">For Businesses</h4>
-          <FooterLink href="/salon">Register Salon</FooterLink>
-          <FooterLink href="/salon">Register Barber</FooterLink>
-          <FooterLink href="/support">Business FAQ</FooterLink>
-          <FooterLink href="/support">Business Support</FooterLink>
-        </FooterSection>
-        <FooterSection>
-          <h4 className="font-semibold text-foreground">Company</h4>
-          <FooterLink href="/support">About Us</FooterLink>
-          <FooterLink href="/support">Blog</FooterLink>
-          <FooterLink href="/support">Careers</FooterLink>
-          <FooterLink href="/support">Press</FooterLink>
-        </FooterSection>
-        <FooterSection>
-          <h4 className="font-semibold text-foreground">Support</h4>
-          <FooterLink href="/support">Help Center</FooterLink>
-          <FooterLink href="/support">Contact Us</FooterLink>
-          <FooterLink href="/feedback">Send Feedback</FooterLink>
-          <FooterLink href="/report">Report Issue</FooterLink>
-        </FooterSection>
-        <FooterSection>
-          <h4 className="font-semibold text-foreground">Legal</h4>
-          <FooterLink href="/support">Privacy Policy</FooterLink>
-          <FooterLink href="/support">Terms of Service</FooterLink>
-          <FooterLink href="/support">Cookie Policy</FooterLink>
-          <FooterLink href="/disclaimer">Disclaimer</FooterLink>
-        </FooterSection>
-      </Footer>
     </div>
   );
 }

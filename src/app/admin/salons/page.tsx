@@ -56,6 +56,7 @@ export default function AdminSalonsPage() {
   const [history, setHistory] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [statusSavingId, setStatusSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -142,6 +143,37 @@ export default function AdminSalonsPage() {
     }
   }
 
+  async function changeSalonStatus(salon: AdminSalon) {
+    const nextIsActive = !salon.isActive;
+    const action = nextIsActive ? 'reactivate' : 'deactivate';
+    const confirmation = nextIsActive
+      ? `Reactivate ${salon.name}? Only approved salons in supported locations can be reactivated.`
+      : `Deactivate ${salon.name}? It will no longer accept new bookings. Existing booking, payment, and audit history will be preserved.`;
+    if (!window.confirm(confirmation)) return;
+
+    setStatusSavingId(salon._id);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch('/api/admin/salons', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'status', salonId: salon._id, isActive: nextIsActive }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error?.message || `Unable to ${action} this salon.`);
+      }
+      if (selected?._id === salon._id) setSelected(result.data);
+      setNotice(`${salon.name} was ${nextIsActive ? 'reactivated' : 'deactivated'}. History was preserved.`);
+      await load(1);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Unable to ${action} this salon.`);
+    } finally {
+      setStatusSavingId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -193,7 +225,19 @@ export default function AdminSalonsPage() {
                     </Badge>
                     <Badge variant={salon.isVerified ? 'success' : 'warning'}>{salon.isVerified ? 'Verified' : 'Unverified'}</Badge>
                     <Badge variant={salon.isActive ? 'success' : 'warning'}>{salon.isActive ? 'Active' : 'Inactive'}</Badge>
-                    <Button type="button" variant="outline" size="sm" onClick={() => void openDetails(salon)}>Review details</Button>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => void openDetails(salon)}>Review details</Button>
+                      <Button
+                        type="button"
+                        variant={salon.isActive ? 'outline' : 'secondary'}
+                        size="sm"
+                        disabled={statusSavingId !== null || saving || (!salon.isActive && (!salon.isVerified || statusLabel(salon) !== 'APPROVED'))}
+                        title={!salon.isActive && (!salon.isVerified || statusLabel(salon) !== 'APPROVED') ? 'Approve and verify this salon before reactivating it.' : undefined}
+                        onClick={() => void changeSalonStatus(salon)}
+                      >
+                        {statusSavingId === salon._id ? 'Saving…' : salon.isActive ? 'Deactivate' : 'Reactivate'}
+                      </Button>
+                    </div>
                   </div>
                 </article>
               ))}

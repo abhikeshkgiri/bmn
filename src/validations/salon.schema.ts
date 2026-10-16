@@ -72,7 +72,7 @@ const PublicImageSchema = z.union([HttpUrlSchema, LocalPublicImageSchema]);
 const OptionalPublicImageSchema = z.union([PublicImageSchema, z.literal('')]).optional();
 
 export const ContactSchema = z.object({
-  phone: z.string().trim().regex(/^\+?[1-9]\d{9,14}$/),
+  phone: z.string().trim().regex(/^[6-9]\d{9}$/, 'Phone number must be exactly 10 digits'),
   email: z.union([z.string().trim().toLowerCase().email().max(160), z.literal('')]).optional(),
   website: OptionalHttpUrlSchema,
 }).strict();

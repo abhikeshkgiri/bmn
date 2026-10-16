@@ -81,6 +81,29 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-brand-black: var(--brand-black);
+  --color-brand-pink: var(--brand-pink);
+  --color-brand-pink-hover: var(--brand-pink-hover);
+  --color-brand-white: var(--brand-white);
+  --color-border: var(--border);
+  --color-border-light: var(--border-light);
+  --color-border-strong: var(--border-strong);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-foreground-disabled: var(--foreground-disabled);
+  --color-error-50: var(--error-light);
+  --color-error-500: var(--error);
+  --color-error-600: var(--error-dark);
+  --color-error-700: var(--error-dark);
+  --color-success-50: var(--success-light);
+  --color-success-600: var(--success-dark);
+  --color-success-700: var(--success-dark);
+  --color-warning-50: var(--warning-light);
+  --color-warning-600: var(--warning-dark);
+  --color-warning-700: var(--warning-dark);
+  --color-info-50: var(--info-light);
+  --color-info-600: var(--info-dark);
+  --color-info-700: var(--info-dark);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -106,54 +129,46 @@ body {
 
 html {
   scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
 }
 
-/* Accessible focus styles */
 *:focus-visible {
-  outline: 2px solid var(--brand-pink);
+  outline: 3px solid #C2185B;
   outline-offset: 2px;
 }
 
-/* Buttons should have pink focus */
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid var(--brand-pink);
-  outline-offset: 2px;
-}
-
-/* Semantic HTML elements */
 h1, h2, h3, h4, h5, h6 {
-  color: var(--foreground);
   margin-top: 0;
 }
 
 p {
   margin-top: 0;
-  color: var(--foreground);
 }
 
-a {
-  color: var(--brand-pink);
-  text-decoration: none;
-  transition: color 0.2s ease;
-}
-
-a:hover {
-  color: var(--brand-pink-hover);
+a:not([class]) {
+  color: #C2185B;
   text-decoration: underline;
+  text-underline-offset: 0.18em;
 }
 
-/* Ensure no dark mode is applied */
-[data-theme="dark"],
-.dark,
-.dark-mode {
-  display: none !important;
+a:not([class]):hover {
+  color: #880E4F;
 }
 
-/* Reset input and form styles */
+a.text-brand-pink,
+a.text-pink-500,
+a.text-pink-600 {
+  color: #C2185B;
+}
+
+a.text-brand-pink:hover,
+a.text-pink-500:hover,
+a.text-pink-600:hover,
+a[class~="hover:text-brand-pink"]:hover,
+a[class~="hover:text-brand-pink-hover"]:hover {
+  color: #880E4F;
+}
+
 input,
 textarea,
 select {
@@ -171,13 +186,22 @@ button {
   font-family: inherit;
 }
 
-p.text-sm.font-semibold.uppercase.tracking-\[0\.2em\].text-white.custom {
-    color: white;
+button:disabled {
+  cursor: not-allowed;
 }
 
-h2.mt-3.text-3xl.font-bold.text-white.md\:text-4xl.custom{
- color: white;
+::selection {
+  color: var(--foreground);
+  background: var(--pink-200);
 }
-p.mt-4.text-white.custom {
-    color: white;
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

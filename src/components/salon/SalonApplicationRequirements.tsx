@@ -135,9 +135,9 @@ export default function SalonApplicationRequirements({
   return (
     <section className="space-y-3 border-t border-border pt-5" aria-labelledby="application-requirements-title">
       <div>
-        <h3 id="application-requirements-title" className="font-semibold">Complete your application</h3>
+        <h3 id="application-requirements-title" className="font-semibold">Services and barber team</h3>
         <p className="mt-1 text-sm text-foreground-secondary">
-          Add at least one active service and one barber profile here. Your barber does not need a separate account; the profile can take bookings once your salon is approved. Aadhaar and PAN uploads are required before submission.
+          Save at least one service, then add a barber and tick the services they offer. These are part of your salon application; the barber does not need a separate account.
         </p>
         <p className="mt-2 text-sm font-medium" aria-live="polite">
           Saved services: {activeServiceCount} active · barber profiles: {barberProfileCount}
@@ -148,7 +148,7 @@ export default function SalonApplicationRequirements({
       {notice && <p role="status" className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">{notice}</p>}
 
       <details open={activeServiceCount === 0} className="rounded-xl border border-border bg-white">
-        <summary className="cursor-pointer p-4 font-semibold">1. Add a salon service {activeServiceCount > 0 ? `(${activeServiceCount} active saved)` : '(required)'}</summary>
+        <summary className="cursor-pointer p-4 font-semibold">1. Add a service {activeServiceCount > 0 ? `(${activeServiceCount} active saved)` : '(required)'}</summary>
         <form onSubmit={saveService} className="space-y-4 border-t border-border p-4">
           <Input label="Service name" required minLength={2} maxLength={100} value={serviceName} onChange={(event) => setServiceName(event.target.value)} placeholder="e.g. Men's haircut" />
           <label className="block text-sm font-medium">
@@ -167,7 +167,7 @@ export default function SalonApplicationRequirements({
       </details>
 
       <details open={barberProfileCount === 0 && activeServiceCount > 0} className="rounded-xl border border-border bg-white">
-        <summary className="cursor-pointer p-4 font-semibold">2. Add a barber profile {barberProfileCount > 0 ? `(${barberProfileCount} saved)` : '(required)'}</summary>
+        <summary className="cursor-pointer p-4 font-semibold">2. Add a barber and assign services {barberProfileCount > 0 ? `(${barberProfileCount} saved)` : '(required)'}</summary>
         <form onSubmit={saveBarber} className="space-y-4 border-t border-border p-4">
           {barbers.length > 0 && (
             <ul className="space-y-1 text-sm text-foreground-secondary">

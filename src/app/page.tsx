@@ -10,20 +10,14 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  Tag,
   XCircle,
 } from 'lucide-react';
-import Logo from '@/components/navbar/Logo';
-import { Navbar, NavbarBrand, NavbarMenu, NavbarMenuItem, NavbarActions } from '@/components/navbar/Navbar';
-import NavbarAccountActions from '@/components/navbar/NavbarAccountActions';
-import { Footer, FooterSection, FooterLink, FooterDivider, FooterBottom } from '@/components/footer/Footer';
-import Button from '@/components/ui/Button';
+import { ButtonLink } from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
-import { Card, CardContent } from '@/components/ui/Card';
 import { SearchForm } from '@/components/search/SearchForm';
 import HomeSalonFeed from '@/components/home/HomeSalonFeed';
-import { getDemoOffers } from '@/lib/demo-offers';
-import { getDemoReviews } from '@/lib/demo-reviews';
+import HomeNearbySalonFeed from '@/components/home/HomeNearbySalonFeed';
+import { SALON_TYPE } from '@/constants/services';
 
 export const dynamic = 'force-dynamic';
 
@@ -147,24 +141,6 @@ function SectionHeading({
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-white text-foreground">
-      {/* -------------------------------- Navbar -------------------------------- */}
-      <Navbar>
-        <NavbarBrand>
-          <Logo size="md" />
-        </NavbarBrand>
-        <NavbarMenu>
-          <NavbarMenuItem href="/search">Search</NavbarMenuItem>
-          <NavbarMenuItem href="/salons?location=1">Location</NavbarMenuItem>
-          <NavbarMenuItem href="/salons">Salons</NavbarMenuItem>
-          <NavbarMenuItem href="/services">Services</NavbarMenuItem>
-          <NavbarMenuItem href="/offers">Offers</NavbarMenuItem>
-          <NavbarMenuItem href="/salon">For Business</NavbarMenuItem>
-        </NavbarMenu>
-        <NavbarActions>
-          <NavbarAccountActions />
-        </NavbarActions>
-      </Navbar>
-
       <main>
         {/* --------------------------------- Hero --------------------------------- */}
         <section className="relative overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(255,45,122,0.12),_transparent_45%),linear-gradient(135deg,#fff_0%,#fff7fa_45%,#fff_100%)]">
@@ -208,6 +184,9 @@ export default function HomePage() {
           </div>
         </section>
 
+        {/* ---------------------------- Nearest Salons ---------------------------- */}
+        <HomeNearbySalonFeed />
+
         {/* ---------------------------- Quick Services ---------------------------- */}
         <section className="mx-auto max-w-7xl px-4 py-10 md:py-14">
           <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
@@ -231,16 +210,28 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ----------------------------- Featured Salons ---------------------------- */}
+        {/* ------------------------------ Men's Salons ------------------------------ */}
         <section className="mx-auto max-w-7xl px-4 py-14 md:py-20">
           <div className="mb-8 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-            <SectionHeading eyebrow="Top rated" title="Top 3 Salons" />
+            <SectionHeading eyebrow="Top rated" title="Top men’s salons" />
             <Link href="/salons" className="text-sm font-semibold text-brand-pink hover:underline">
               See all salons
             </Link>
           </div>
 
-          <HomeSalonFeed />
+          <HomeSalonFeed salonTypes={[SALON_TYPE.MEN_SALON, SALON_TYPE.BARBERSHOP]} />
+        </section>
+
+        {/* ----------------------------- Women's Salons ----------------------------- */}
+        <section className="mx-auto max-w-7xl px-4 py-10 md:py-14">
+          <div className="mb-8 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <SectionHeading eyebrow="Top rated" title="Top women’s salons" />
+            <Link href="/salons" className="text-sm font-semibold text-brand-pink hover:underline">
+              See all salons
+            </Link>
+          </div>
+
+          <HomeSalonFeed salonTypes={[SALON_TYPE.WOMEN_SALON]} />
         </section>
 
         {/* ----------------------------- How It Works ----------------------------- */}
@@ -288,85 +279,31 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* -------------------------------- Offers -------------------------------- */}
-        <section className="mx-auto max-w-7xl px-4 py-14 md:py-20">
-          <div className="mb-8 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-            <SectionHeading eyebrow="Save more" title="Offers & Coupons" />
-            <Link href="/offers" className="text-sm font-semibold text-brand-pink hover:underline">
-              View all offers
-            </Link>
-          </div>
-
-          <p className="mb-5 text-sm text-foreground-secondary">
-            Sample coupons for preview only; they are not redeemable at checkout.
-          </p>
-          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {getDemoOffers().map((offer) => (
-              <Card key={offer.code} className="h-full overflow-hidden">
-                <CardContent className="p-5">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <Badge variant="pink"><Tag size={12} className="mr-1" />{offer.badge}</Badge>
-                    <span className="text-sm font-semibold text-brand-black">{offer.code}</span>
-                  </div>
-                  <h3 className="text-xl font-bold text-brand-black">{offer.title}</h3>
-                  <p className="mt-2 text-sm text-foreground-secondary">{offer.description}</p>
-                  <div className="mt-5 rounded-xl border border-brand-pink/20 bg-brand-pink/5 p-3">
-                    <p className="text-xs uppercase tracking-wide text-foreground-secondary">Demo discount</p>
-                    <p className="mt-1 text-2xl font-bold text-brand-pink">{offer.discountText}</p>
-                  </div>
-                  <p className="mt-4 text-xs text-foreground-muted">Sample only · not valid for payment</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-
-        {/* ---------------------------- Customer Reviews -------------------------- */}
+        {/* ----------------------------- Help Section ----------------------------- */}
         <section className="border-y border-border bg-neutral-50 py-14 md:py-20">
-          <div className="mx-auto max-w-7xl px-4">
-            <SectionHeading
-              align="center"
-              eyebrow="Demo feedback"
-              title="Preview feedback examples"
-              subtitle="Placeholder copy for layout preview; no real customer reviews or ratings are shown here."
-            />
-
-            <p className="mt-4 text-center text-sm text-foreground-secondary">
-              Demo placeholder content for layout testing only — not customer feedback or testimonials.
-            </p>
-            <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {getDemoReviews().map((review) => (
-                <Card key={`${review.customer}-${review.salon}`} className="h-full">
-                  <CardContent className="p-6">
-                    <Badge variant="info">Preview feedback · no real rating</Badge>
-                    <p className="mt-4 text-foreground-secondary">“{review.review}”</p>
-                    <div className="mt-5 border-t border-border pt-4">
-                      <p className="font-semibold text-brand-black">{review.customer}</p>
-                      <p className="text-sm text-foreground-secondary">{review.salon} · {review.city}</p>
-                      <Badge variant="info" className="mt-3">{review.badge}</Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+          <div className="mx-auto grid max-w-7xl gap-8 px-4 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <SectionHeading
+                eyebrow="Need a hand?"
+                title="Book with confidence"
+                subtitle="Review the booking and payment details, or contact support if you need help."
+              />
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row md:flex-col">
+              <ButtonLink href="/support" variant="primary" className="w-full">Visit support <ArrowRight size={18} /></ButtonLink>
+              <ButtonLink href="/refund-policy" variant="outline" className="w-full">Read cancellation policy</ButtonLink>
             </div>
           </div>
         </section>
 
         {/* ----------------------------- Business CTA ----------------------------- */}
         <section className="mx-auto max-w-7xl px-4 py-16 md:py-24">
-          <div
-            className="relative overflow-hidden rounded-[2rem] border border-border p-8 text-white shadow-bookmynai-lg md:p-12"
-            style={{
-              backgroundImage: "linear-gradient(135deg, rgba(17,17,17,0.78), rgba(65,15,42,0.72)), url('https://img.magnific.com/free-photo/studio-background-concept-abstract-empty-light-gradient-purple-studio-room-background-product_1258-94417.jpg')",
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-            }}
-          >
+          <div className="relative overflow-hidden rounded-[2rem] border border-neutral-800 bg-gradient-to-br from-neutral-950 via-neutral-900 to-pink-950 p-8 text-white shadow-bookmynai-lg md:p-12">
             <div className="flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
               <div className="max-w-xl text-white">
-                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-white custom">For business</p>
-                <h2 className="mt-3 text-3xl font-bold text-white md:text-4xl custom">Are you a Salon or Barber?</h2>
-                <p className="mt-4 text-white custom">Get discovered by nearby customers, manage your services and prices, set your working hours, and receive bookings straight to your dashboard.</p>
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-pink-200">For business</p>
+                <h2 className="mt-3 text-3xl font-bold text-white md:text-4xl">Bring your salon to BookMyNai</h2>
+                <p className="mt-4 text-white/85">Create your profile, add your services and team, then submit it for administrator review before it appears to customers.</p>
                 <ul className="mt-6 grid gap-2 text-sm text-white sm:grid-cols-2">
                   <li className="flex items-center gap-2 text-white"><BadgeCheck size={16} className="text-brand-pink" />Get discovered locally</li>
                   <li className="flex items-center gap-2 text-white"><BadgeCheck size={16} className="text-brand-pink" />Manage bookings & staff</li>
@@ -375,79 +312,14 @@ export default function HomePage() {
                 </ul>
               </div>
               <div className="flex flex-col gap-4 sm:flex-row">
-                <Link href="/salon"><Button variant="primary" size="lg" className="w-full">Sign Up for Business <ArrowRight size={18} className="ml-2" /></Button></Link>
-                <Link href="/salon"><Button variant="outline" size="lg" className="w-full border-white bg-transparent text-white hover:bg-white/10 hover:text-white">Learn More</Button></Link>
+                <ButtonLink href="/salon/signup" variant="primary" size="lg" className="w-full">Register your salon <ArrowRight size={18} /></ButtonLink>
+                <ButtonLink href="/salon" variant="secondary" size="lg" className="w-full">Salon portal</ButtonLink>
               </div>
             </div>
           </div>
         </section>
       </main>
 
-      {/* -------------------------------- Footer -------------------------------- */}
-      <Footer>
-        <div className="mx-auto max-w-7xl px-4 py-12 md:py-16">
-          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
-            <FooterSection title="Product">
-              <FooterLink href="/salons">Browse Salons</FooterLink>
-              <FooterLink href="/services">Services</FooterLink>
-              <FooterLink href="/offers">Offers</FooterLink>
-              <FooterLink href="/search">Search</FooterLink>
-            </FooterSection>
-
-            <FooterSection title="For Businesses">
-              <FooterLink href="/salon">Salon portal</FooterLink>
-              <FooterLink href="/salon">Get Started</FooterLink>
-              <FooterLink href="/support">Support</FooterLink>
-            </FooterSection>
-
-            <FooterSection title="Company">
-              <FooterLink href="/support">About Us</FooterLink>
-              <FooterLink href="/support">Blog</FooterLink>
-              <FooterLink href="/support">Careers</FooterLink>
-              <FooterLink href="/support">Press</FooterLink>
-            </FooterSection>
-
-            <FooterSection title="Support">
-              <FooterLink href="/support">Help Center</FooterLink>
-              <FooterLink href="/support">Contact Us</FooterLink>
-              <FooterLink href="/support">FAQ</FooterLink>
-              <FooterLink href="/support">Status</FooterLink>
-            </FooterSection>
-
-            <FooterSection title="Legal">
-              <FooterLink href="/support">Privacy Policy</FooterLink>
-              <FooterLink href="/support">Terms of Service</FooterLink>
-              <FooterLink href="/support">Refund Policy</FooterLink>
-              <FooterLink href="/support">Cookie Policy</FooterLink>
-            </FooterSection>
-          </div>
-
-          <FooterDivider />
-
-          <FooterBottom>
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-center gap-8">
-                <Logo size="sm" />
-                <p className="text-sm text-foreground-secondary">© 2026 BookMyNai. All rights reserved.</p>
-              </div>
-              <div className="flex gap-4 text-sm text-foreground-secondary">
-                <a href="https://twitter.com" className="hover:text-brand-pink" aria-label="Twitter">
-                  Twitter
-                </a>
-                <a href="https://facebook.com" className="hover:text-brand-pink" aria-label="Facebook">
-                  Facebook
-                </a>
-                <a href="https://instagram.com" className="hover:text-brand-pink" aria-label="Instagram">
-                  Instagram
-                </a>
-                <a href="https://linkedin.com" className="hover:text-brand-pink" aria-label="LinkedIn">
-                  LinkedIn
-                </a>
-              </div>
-            </div>
-          </FooterBottom>
-        </div>
-      </Footer>
     </div>
   );
 }

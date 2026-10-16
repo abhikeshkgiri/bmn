@@ -57,6 +57,7 @@ export default function LoginPage() {
   const [otpDigits, setOtpDigits] = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [accountRequired, setAccountRequired] = useState(false);
   const [success, setSuccess] = useState('');
   const [devOtp, setDevOtp] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
@@ -91,6 +92,7 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     setSuccess('');
+    setAccountRequired(false);
 
     if (!phone.trim()) {
       setError('Please enter your phone number');
@@ -104,17 +106,16 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      const response = await fetch(audience === 'salonOwner'
-        ? '/api/auth/send-salon-owner-otp'
-        : '/api/auth/send-otp', {
+      const response = await fetch('/api/auth/login-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone, audience }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
+        setAccountRequired(data.code === 'ACCOUNT_NOT_FOUND');
         setError(data.error || 'Failed to send OTP');
         setLoading(false);
         return;
@@ -138,6 +139,7 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     setSuccess('');
+    setAccountRequired(false);
 
     if (!otp.trim() || otp.length !== OTP_LENGTH) {
       setError('Please enter a valid 6-digit OTP');
@@ -146,7 +148,7 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      const response = await fetch('/api/auth/verify-otp', {
+      const response = await fetch('/api/auth/verify-login-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, otp }),
@@ -155,6 +157,7 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (!response.ok) {
+        setAccountRequired(data.code === 'ACCOUNT_NOT_FOUND');
         setError(data.error || 'Failed to verify OTP');
         setLoading(false);
         return;
@@ -225,6 +228,7 @@ export default function LoginPage() {
     setOtpDigits(Array(OTP_LENGTH).fill(''));
     setError('');
     setSuccess('');
+    setAccountRequired(false);
   };
 
   if (!audience) {
@@ -339,9 +343,19 @@ export default function LoginPage() {
 
             {/* Error Message */}
             {error && (
-              <div className="mb-4 flex items-start gap-2 rounded-xl border border-error-200 bg-error-50 p-3">
-                <XCircle size={18} className="mt-0.5 shrink-0 text-error-600" />
-                <p className="text-sm text-error-700">{error}</p>
+              <div className="mb-4 rounded-xl border border-error-200 bg-error-50 p-3">
+                <div className="flex items-start gap-2">
+                  <XCircle size={18} className="mt-0.5 shrink-0 text-error-600" />
+                  <p className="text-sm text-error-700">{error}</p>
+                </div>
+                {accountRequired && (
+                  <Link
+                    href={audience === 'salonOwner' ? '/salon/signup' : '/signup'}
+                    className="mt-2 inline-block text-sm font-semibold text-brand-pink underline"
+                  >
+                    Create an account, then sign in
+                  </Link>
+                )}
               </div>
             )}
 
@@ -373,14 +387,14 @@ export default function LoginPage() {
                     <Input
                       type="tel"
                       label="Mobile Number"
-                      placeholder="9876543210 or +919876543210"
+                      placeholder="10-digit mobile number"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
                       disabled={loading}
                       required
                     />
                     <p className="mt-2 text-xs text-foreground-secondary">
-                      Enter your Indian mobile number to receive an OTP
+                      Enter your 10-digit Indian mobile number to receive an OTP
                     </p>
                   </div>
 

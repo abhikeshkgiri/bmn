@@ -48,8 +48,13 @@ function isExpectedOtpError(error: unknown): boolean {
     AUTH_ERRORS.OTP_EXPIRED,
     AUTH_ERRORS.OTP_ATTEMPTS_EXCEEDED,
     AUTH_ERRORS.USER_INACTIVE,
+    'ACCOUNT_NOT_FOUND',
   ];
   return error instanceof Error && expectedErrors.includes(error.message);
+}
+
+function hasCompletedRegistration(user: { name?: string } | null): boolean {
+  return Boolean(user?.name?.trim() && user.name.trim().toLocaleLowerCase('en-IN') !== 'new user');
 }
 
 /**
@@ -111,12 +116,29 @@ export async function requestOtp(
   }
 }
 
+export async function requestLoginOtp(
+  phoneInput: string,
+  audience: 'customer' | 'salonOwner',
+): Promise<{ otp: string | null; success: boolean }> {
+  await connectDB();
+  const phone = normalizePhoneNumber(phoneInput);
+  const user = await User.findOne({ phone }).select('role isActive name');
+  if (!user || !hasCompletedRegistration(user)) throw new Error('ACCOUNT_NOT_FOUND');
+  if (!user.isActive) throw new Error(AUTH_ERRORS.USER_INACTIVE);
+  if (audience === 'salonOwner' && user.role === USER_ROLES.CUSTOMER) {
+    throw new Error('SALON_OWNER_ACCOUNT_REQUIRED');
+  }
+
+  return requestOtp(phone, audience === 'salonOwner' ? USER_ROLES.SALON_OWNER : USER_ROLES.CUSTOMER);
+}
+
 /**
  * Verify OTP and create/find user
  */
 export async function verifyOtpAndGetUser(
   phoneInput: string,
-  otpInput: string
+  otpInput: string,
+  allowNewUser = true,
 ): Promise<{ user: AuthUser; isNewUser: boolean }> {
   try {
     await connectDB();
@@ -178,6 +200,10 @@ export async function verifyOtpAndGetUser(
     let user = await User.findOne({ phone });
     let isNewUser = false;
 
+    if (!allowNewUser && !hasCompletedRegistration(user)) {
+      throw new Error('ACCOUNT_NOT_FOUND');
+    }
+
     if (!user) {
       // Create new user with CUSTOMER role
       user = await User.create({
@@ -190,6 +216,12 @@ export async function verifyOtpAndGetUser(
       isNewUser = true;
     } else if (!user.isActive) {
       throw new Error(AUTH_ERRORS.USER_INACTIVE);
+    } else if (!hasCompletedRegistration(user)) {
+      user.role = otpRecord.signupRole === USER_ROLES.SALON_OWNER
+        ? USER_ROLES.SALON_OWNER
+        : USER_ROLES.CUSTOMER;
+      await user.save();
+      isNewUser = true;
     }
 
     return {

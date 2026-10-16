@@ -13,7 +13,18 @@ const PriceSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const user = await getCurrentUser();
-    if (!user || user.role !== 'CUSTOMER') return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Sign in as a customer to continue with booking.' } },
+        { status: 401 },
+      );
+    }
+    if (user.role !== 'CUSTOMER') {
+      return NextResponse.json(
+        { success: false, error: { code: 'FORBIDDEN', message: 'Only customer accounts can continue with booking.' } },
+        { status: 403 },
+      );
+    }
     const input = PriceSchema.parse(await request.json());
     const price = await calculateCheckoutPrice({ ...input, customerId: user._id });
     return NextResponse.json({ success: true, data: price });

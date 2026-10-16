@@ -4,13 +4,13 @@
  * Does not expose secrets
  */
 
-require('./scripts/test-db-bootstrap.cjs');
+require('../test-db-bootstrap.cjs');
 
 const fs = require('fs');
 const path = require('path');
 
 // Manual .env.local loading
-const envPath = path.join(__dirname, '.env.local');
+const envPath = path.join(__dirname, '..', '..', '.env.local');
 if (fs.existsSync(envPath)) {
   const envContent = fs.readFileSync(envPath, 'utf-8');
   envContent.split('\n').forEach((line) => {

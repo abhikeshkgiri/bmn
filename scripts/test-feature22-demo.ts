@@ -60,7 +60,7 @@ for (const [index, salon] of DEMO_SALONS.entries()) {
     },
     location: { type: 'Point', coordinates: salon.coordinates },
     contact: {
-      phone: `+9993000${String(index + 1).padStart(3, '0')}`,
+      phone: String(9000000000 + index + 1),
       email: `hello.${salon.key}@example.com`,
     },
     openingHours: {

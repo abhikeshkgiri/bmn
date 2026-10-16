@@ -7,6 +7,10 @@ import { canManageSalon } from '../src/utils/salon-authorization';
 import { canUpdateAccountProfile } from '../src/utils/profile-authorization';
 import { isDatabaseUnavailableError } from '../src/lib/db-errors';
 import { getSalonApplicationBlockers } from '../src/utils/salon-application-readiness';
+import {
+  resolveSupportedCityFromPostalLocation,
+  resolveSupportedStateFromPostalLocation,
+} from '../src/utils/indian-postal-location';
 import { detectAllowedUploadType, getSalonUploadFolderName } from '../src/lib/salon-uploads';
 import { SalonApprovalDecisionSchema, SalonVerificationSchema } from '../src/validations/admin-salon.schema';
 import { CustomerProfileUpdateSchema } from '../src/validations/customer-profile.schema';
@@ -45,10 +49,32 @@ const parsed = SalonCreateSchema.parse(validSalon);
 assert.equal(parsed.name, 'Sample Salon');
 assert.equal(parsed.address.addressLine1, '123 Main Road');
 assert.equal(parsed.contact.email, 'owner@example.com');
+assert.equal(SalonCreateSchema.safeParse({
+  ...validSalon,
+  contact: { ...validSalon.contact, phone: '+919876543210' },
+}).success, false);
+assert.equal(SalonCreateSchema.safeParse({
+  ...validSalon,
+  contact: { ...validSalon.contact, phone: '98765432101' },
+}).success, false);
+assert.equal(SalonCreateSchema.safeParse({
+  ...validSalon,
+  contact: { ...validSalon.contact, phone: '98765abc10' },
+}).success, false);
+assert.equal(SalonCreateSchema.safeParse({
+  ...validSalon,
+  contact: { ...validSalon.contact, email: 'owner@invalid' },
+}).success, false);
 assert.equal(SalonCreateSchema.safeParse({ ...validSalon, salonType: 'UNSUPPORTED' }).success, false);
 assert.deepEqual(normalizeSupportedSalonLocation(' Delhi ', 'DELHI'), { city: 'Delhi', state: 'Delhi' });
 assert.equal(normalizeSupportedSalonLocation('Delhi', 'Uttar Pradesh'), undefined);
 assert.equal(normalizeSupportedSalonLocation('Unsupported City', 'Unknown'), undefined);
+assert.deepEqual(resolveSupportedCityFromPostalLocation('East Delhi', 'Delhi'), { city: 'Delhi', state: 'Delhi' });
+assert.deepEqual(resolveSupportedCityFromPostalLocation('Gautam Buddha Nagar', 'Uttar Pradesh'), { city: 'Noida', state: 'Uttar Pradesh' });
+assert.deepEqual(resolveSupportedCityFromPostalLocation('Gurgaon', 'Haryana'), { city: 'Gurugram', state: 'Haryana' });
+assert.equal(resolveSupportedCityFromPostalLocation('Dehradun', 'Uttarakhand'), undefined);
+assert.equal(resolveSupportedCityFromPostalLocation('Pune', 'Gujarat'), undefined);
+assert.equal(resolveSupportedStateFromPostalLocation(' DELHI '), 'Delhi');
 
 assert.equal(SalonCreateSchema.safeParse({
   ...validSalon,

@@ -1,8 +1,39 @@
 import React from 'react';
+import Link from 'next/link';
+
+type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link';
+type ButtonSize = 'sm' | 'md' | 'lg' | 'icon';
+
+const variantStyles: Record<ButtonVariant, string> = {
+  primary: 'border-pink-700 bg-pink-700 text-white shadow-sm hover:border-pink-800 hover:bg-pink-800 active:bg-pink-900',
+  secondary: 'border-brand-black bg-brand-black text-white shadow-sm hover:bg-neutral-800 active:bg-neutral-900',
+  outline: 'border-neutral-400 bg-white text-brand-black shadow-sm hover:border-pink-700 hover:bg-pink-50 hover:text-pink-800 active:bg-pink-100',
+  ghost: 'border-transparent bg-transparent text-brand-black hover:bg-neutral-100 active:bg-neutral-200',
+  destructive: 'border-error-600 bg-error-600 text-white hover:bg-error-700 active:bg-error-700',
+  link: 'border-transparent bg-transparent text-pink-800 underline-offset-4 hover:text-pink-900 hover:underline active:text-pink-900',
+};
+
+const sizeStyles: Record<ButtonSize, string> = {
+  sm: 'min-h-10 px-3 text-sm',
+  md: 'px-4 py-2.5 text-base',
+  lg: 'min-h-12 px-6 text-lg',
+  icon: 'min-h-11 min-w-11 p-2',
+};
+
+const baseStyles = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border font-semibold transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-pink disabled:cursor-not-allowed disabled:border-neutral-300 disabled:bg-neutral-200 disabled:text-neutral-700 disabled:shadow-none';
+
+function getButtonClassName(
+  variant: ButtonVariant,
+  size: ButtonSize,
+  fullWidth: boolean,
+  className?: string,
+) {
+  return `${baseStyles} ${variantStyles[variant]} ${sizeStyles[size]} ${fullWidth ? 'w-full' : ''} ${className || ''}`;
+}
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link';
-  size?: 'sm' | 'md' | 'lg' | 'icon';
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   isLoading?: boolean;
   fullWidth?: boolean;
   children: React.ReactNode;
@@ -19,40 +50,17 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     children,
     ...props
   }, ref) => {
-    const baseStyles = 'inline-flex items-center justify-center font-medium border transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-neutral-300 disabled:text-neutral-500 disabled:border-neutral-300';
-
-    const variantStyles = {
-      primary:
-        'border-brand-pink bg-[#FF568D] text-white shadow-sm hover:bg-brand-pink-hover hover:text-white active:bg-[#C2185B] focus-visible:outline-brand-pink',
-      secondary:
-        'border-brand-black bg-brand-black text-white shadow-sm hover:bg-neutral-800 hover:text-white active:bg-neutral-900 focus-visible:outline-brand-black',
-      outline:
-        'border-brand-pink/30 bg-transparent text-brand-black shadow-sm hover:border-brand-pink hover:bg-brand-pink/5 hover:text-brand-pink active:bg-brand-pink/10 focus-visible:outline-brand-pink',
-      ghost:
-        'border-transparent bg-neutral-100 text-brand-black hover:bg-neutral-200 hover:text-brand-black active:bg-neutral-300 focus-visible:outline-brand-pink',
-      destructive:
-        'border-error-500 bg-error-500 text-white hover:bg-error-600 hover:text-white active:bg-error-700 focus-visible:outline-error-500',
-      link:
-        'border-transparent bg-transparent text-brand-pink underline-offset-4 hover:text-brand-pink-hover hover:underline active:text-brand-pink-hover focus-visible:outline-brand-pink',
-    };
-
-    const sizeStyles = {
-      sm: 'px-3 py-1.5 text-sm rounded-md',
-      md: 'px-4 py-2.5 text-base rounded-lg',
-      lg: 'px-6 py-3 text-lg rounded-lg',
-      icon: 'p-2 rounded-lg',
-    };
-
     return (
       <button
         ref={ref}
         disabled={disabled || isLoading}
-        className={`${baseStyles} ${variantStyles[variant]} ${sizeStyles[size]} ${fullWidth ? 'w-full' : ''} ${className || ''}`}
+        aria-busy={isLoading || undefined}
+        className={getButtonClassName(variant, size, fullWidth, className)}
         {...props}
       >
         {isLoading ? (
           <>
-            <span className="inline-block w-4 h-4 border-2 border-current border-r-transparent rounded-full animate-spin mr-2" />
+            <span aria-hidden="true" className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent" />
             {children}
           </>
         ) : (
@@ -64,5 +72,33 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 );
 
 Button.displayName = 'Button';
+
+interface ButtonLinkProps extends Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> {
+  href: string;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  fullWidth?: boolean;
+  children: React.ReactNode;
+}
+
+export function ButtonLink({
+  href,
+  variant = 'primary',
+  size = 'md',
+  fullWidth = false,
+  className,
+  children,
+  ...props
+}: ButtonLinkProps) {
+  return (
+    <Link
+      href={href}
+      className={getButtonClassName(variant, size, fullWidth, className)}
+      {...props}
+    >
+      {children}
+    </Link>
+  );
+}
 
 export default Button;

@@ -296,7 +296,7 @@ async function seedDemoData(databaseName: string): Promise<void> {
       },
       location: { type: 'Point', coordinates: fixture.coordinates },
       contact: {
-        phone: `+9993000${String(index + 1).padStart(3, '0')}`,
+        phone: String(9000000000 + index + 1),
         email: `hello.${fixture.key}@example.com`,
       },
       openingHours: makeOpeningHours(),

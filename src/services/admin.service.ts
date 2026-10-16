@@ -15,7 +15,7 @@ import { REVIEW_STATUS } from '@/constants/reviews';
 import type { AuthUser } from '@/types';
 import { recordAuditEvent } from '@/services/audit.service';
 import { normalizeSupportedSalonLocation, UNSUPPORTED_CITY_MESSAGE } from '@/constants/launch-cities';
-import { APPROVED_SALON_STATUS_FILTER } from '@/utils/salon-approval';
+import { APPROVED_SALON_STATUS_FILTER, isSalonApproved } from '@/utils/salon-approval';
 import { refreshReviewRatingSummary } from '@/services/review-rating-summary.service';
 
 export class AdminInputError extends Error {
@@ -366,9 +366,45 @@ export async function updateUserStatus(userId: string, isActive: boolean) {
 }
 
 export async function updateUserStatusAsAdmin(actor: AuthUser, userId: string, isActive: boolean) {
+  if (actor._id === userId) throw new AdminInputError('You cannot deactivate your own account');
   const user = await updateUserStatus(userId, isActive);
   await recordAuditEvent({ actor, action: isActive ? 'USER_ACTIVATED' : 'USER_DEACTIVATED', entityType: 'User', entityId: userId });
   return user;
+}
+
+export async function updateSalonStatusAsAdmin(actor: AuthUser, salonId: string, isActive: boolean) {
+  await connectDB();
+  if (!Types.ObjectId.isValid(salonId)) throw new AdminInputError('Invalid salon id');
+
+  const salon = await Salon.findById(salonId);
+  if (!salon) throw new Error('SALON_NOT_FOUND');
+  if (salon.approvalStatus === 'DRAFT') throw new AdminInputError('Draft salons cannot be activated or deactivated.');
+  if (isActive && (
+    !isSalonApproved(salon) ||
+    !normalizeSupportedSalonLocation(salon.address?.city ?? '', salon.address?.state ?? '')
+  )) {
+    throw new AdminInputError('Only an approved, verified salon in a supported location can be activated.');
+  }
+
+  const updatedSalon = await Salon.findOneAndUpdate(
+    {
+      _id: salon._id,
+      isActive: salon.isActive,
+      isVerified: salon.isVerified,
+      approvalStatus: salon.approvalStatus ?? null,
+    },
+    { $set: { isActive } },
+    { new: true, runValidators: true },
+  );
+  if (!updatedSalon) throw new AdminConflictError('Salon status changed while it was being updated. Reload and try again.');
+
+  await recordAuditEvent({
+    actor,
+    action: isActive ? 'SALON_ACTIVATED' : 'SALON_DEACTIVATED',
+    entityType: 'Salon',
+    entityId: salonId,
+  });
+  return updatedSalon;
 }
 
 export async function updateSalonVerification(actor: AuthUser, salonId: string, isVerified: boolean, reason?: string) {

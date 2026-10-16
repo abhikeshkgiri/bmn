@@ -21,10 +21,19 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
     className,
     id,
     type = 'text',
+    onChange,
+    maxLength,
+    pattern,
+    inputMode,
+    autoComplete,
     ...props
   }, ref) => {
     const generatedId = useId();
     const inputId = id || generatedId;
+    const descriptionId = description ? `${inputId}-description` : undefined;
+    const errorId = error ? `${inputId}-error` : undefined;
+    const isPhone = type === 'tel';
+    const isEmail = type === 'email';
 
     return (
       <div className={fullWidth ? 'w-full' : ''}>
@@ -39,6 +48,20 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           id={inputId}
           type={type}
           disabled={disabled}
+          required={required}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={[description && !error ? descriptionId : undefined, errorId].filter(Boolean).join(' ') || undefined}
+          maxLength={isEmail ? Math.min(maxLength ?? 160, 160) : maxLength}
+          pattern={isPhone ? '[0-9]{10}' : pattern}
+          inputMode={isPhone ? 'numeric' : inputMode}
+          autoComplete={isPhone ? (autoComplete || 'tel-national') : autoComplete}
+          onChange={(event) => {
+            if (isPhone) {
+              const digits = event.currentTarget.value.replace(/\D/g, '').slice(0, 10);
+              if (event.currentTarget.value !== digits) event.currentTarget.value = digits;
+            }
+            onChange?.(event);
+          }}
           className={`
             w-full px-3 py-2 border rounded-lg
             bg-white text-foreground placeholder-foreground-muted
@@ -51,10 +74,10 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           {...props}
         />
         {description && !error && (
-          <p className="text-xs text-foreground-muted mt-1">{description}</p>
+          <p id={descriptionId} className="mt-1 text-xs text-foreground-secondary">{description}</p>
         )}
         {error && (
-          <p className="text-xs text-error-600 mt-1">{error}</p>
+          <p id={errorId} className="mt-1 text-xs font-medium text-error-700">{error}</p>
         )}
       </div>
     );
@@ -88,6 +111,8 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
   }, ref) => {
     const generatedId = useId();
     const textareaId = id || generatedId;
+    const descriptionId = description ? `${textareaId}-description` : undefined;
+    const errorId = error ? `${textareaId}-error` : undefined;
 
     return (
       <div className={fullWidth ? 'w-full' : ''}>
@@ -102,6 +127,9 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           id={textareaId}
           rows={rows}
           disabled={disabled}
+          required={required}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={[description && !error ? descriptionId : undefined, errorId].filter(Boolean).join(' ') || undefined}
           className={`
             w-full px-3 py-2 border rounded-lg
             bg-white text-foreground placeholder-foreground-muted
@@ -115,10 +143,10 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           {...props}
         />
         {description && !error && (
-          <p className="text-xs text-foreground-muted mt-1">{description}</p>
+          <p id={descriptionId} className="mt-1 text-xs text-foreground-secondary">{description}</p>
         )}
         {error && (
-          <p className="text-xs text-error-600 mt-1">{error}</p>
+          <p id={errorId} className="mt-1 text-xs font-medium text-error-700">{error}</p>
         )}
       </div>
     );
@@ -151,6 +179,8 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
   }, ref) => {
     const generatedId = useId();
     const selectId = id || generatedId;
+    const descriptionId = description ? `${selectId}-description` : undefined;
+    const errorId = error ? `${selectId}-error` : undefined;
 
     return (
       <div className={fullWidth ? 'w-full' : ''}>
@@ -164,6 +194,9 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           ref={ref}
           id={selectId}
           disabled={disabled}
+          required={required}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={[description && !error ? descriptionId : undefined, errorId].filter(Boolean).join(' ') || undefined}
           className={`
             w-full px-3 py-2 border rounded-lg
             bg-white text-foreground
@@ -183,10 +216,10 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           ))}
         </select>
         {description && !error && (
-          <p className="text-xs text-foreground-muted mt-1">{description}</p>
+          <p id={descriptionId} className="mt-1 text-xs text-foreground-secondary">{description}</p>
         )}
         {error && (
-          <p className="text-xs text-error-600 mt-1">{error}</p>
+          <p id={errorId} className="mt-1 text-xs font-medium text-error-700">{error}</p>
         )}
       </div>
     );
@@ -205,6 +238,7 @@ export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
   ({
     label,
     description,
+    error,
     disabled = false,
     className,
     id,
@@ -212,6 +246,8 @@ export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
   }, ref) => {
     const generatedId = useId();
     const checkboxId = id || generatedId;
+    const descriptionId = description ? `${checkboxId}-description` : undefined;
+    const errorId = error ? `${checkboxId}-error` : undefined;
 
     return (
       <div className="flex items-start">
@@ -220,23 +256,25 @@ export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
           id={checkboxId}
           type="checkbox"
           disabled={disabled}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={[descriptionId, errorId].filter(Boolean).join(' ') || undefined}
           className={`
             w-5 h-5 rounded border-border border-2 mt-0.5
             bg-white text-brand-pink
             focus:outline-none focus:ring-2 focus:ring-pink-100 focus:border-brand-pink
             disabled:bg-neutral-100 disabled:border-neutral-300 disabled:cursor-not-allowed
             cursor-pointer accent-brand-pink
+            ${error ? 'border-error-600 focus:border-error-600 focus:ring-error-50' : ''}
             ${className || ''}
           `}
           {...props}
         />
-        {label && (
-          <label htmlFor={checkboxId} className="ml-2 flex flex-col cursor-pointer">
-            <span className="text-sm font-medium text-foreground">{label}</span>
-            {description && (
-              <span className="text-xs text-foreground-muted mt-0.5">{description}</span>
-            )}
-          </label>
+        {(label || description || error) && (
+          <div className="ml-2 flex flex-col">
+            {label && <label htmlFor={checkboxId} className="cursor-pointer text-sm font-medium text-foreground">{label}</label>}
+            {description && <span id={descriptionId} className="mt-0.5 text-xs text-foreground-secondary">{description}</span>}
+            {error && <span id={errorId} className="mt-0.5 text-xs font-medium text-error-700">{error}</span>}
+          </div>
         )}
       </div>
     );
@@ -248,12 +286,14 @@ Checkbox.displayName = 'Checkbox';
 export interface RadioProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   description?: string;
+  error?: string;
 }
 
 export const Radio = React.forwardRef<HTMLInputElement, RadioProps>(
   ({
     label,
     description,
+    error,
     disabled = false,
     className,
     id,
@@ -261,6 +301,8 @@ export const Radio = React.forwardRef<HTMLInputElement, RadioProps>(
   }, ref) => {
     const generatedId = useId();
     const radioId = id || generatedId;
+    const descriptionId = description ? `${radioId}-description` : undefined;
+    const errorId = error ? `${radioId}-error` : undefined;
 
     return (
       <div className="flex items-start">
@@ -269,23 +311,24 @@ export const Radio = React.forwardRef<HTMLInputElement, RadioProps>(
           id={radioId}
           type="radio"
           disabled={disabled}
+          aria-describedby={[descriptionId, errorId].filter(Boolean).join(' ') || undefined}
           className={`
             w-5 h-5 rounded-full border-border border-2 mt-0.5
             bg-white text-brand-pink
             focus:outline-none focus:ring-2 focus:ring-pink-100 focus:border-brand-pink
             disabled:bg-neutral-100 disabled:border-neutral-300 disabled:cursor-not-allowed
             cursor-pointer accent-brand-pink
+            ${error ? 'border-error-600 focus:border-error-600 focus:ring-error-50' : ''}
             ${className || ''}
           `}
           {...props}
         />
-        {label && (
-          <label htmlFor={radioId} className="ml-2 flex flex-col cursor-pointer">
-            <span className="text-sm font-medium text-foreground">{label}</span>
-            {description && (
-              <span className="text-xs text-foreground-muted mt-0.5">{description}</span>
-            )}
-          </label>
+        {(label || description || error) && (
+          <div className="ml-2 flex flex-col">
+            {label && <label htmlFor={radioId} className="cursor-pointer text-sm font-medium text-foreground">{label}</label>}
+            {description && <span id={descriptionId} className="mt-0.5 text-xs text-foreground-secondary">{description}</span>}
+            {error && <span id={errorId} className="mt-0.5 text-xs font-medium text-error-700">{error}</span>}
+          </div>
         )}
       </div>
     );

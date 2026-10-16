@@ -38,10 +38,10 @@ npm install
 cp .env.example .env.local
 ```
 
-Edit `.env.local` and fill in your values:
+Edit `.env.local` and fill in the development values from `.env.example`:
 ```
 MONGODB_URI=your_mongodb_connection_string
-JWT_SECRET=your_jwt_secret_key
+AUTH_SECRET=your-long-random-secret-at-least-32-characters
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
@@ -74,17 +74,28 @@ Local disk storage is intended only for local development on a single persistent
 - `npm run test:phase15` - Run synthetic booking-concurrency tests against the isolated test database
 
 Database-backed test commands require `.env.local` to set `BOOKMYNAI_TEST_DB=bookmynai_dev` and `MONGODB_URI` to that database on the approved development cluster. The test runner validates both values before connecting and refuses other databases, including `abhikesh_db`. Never put production credentials or real customer data in test fixtures.
+
+Test runners and test-only MongoDB diagnostics live under `scripts/`; they are developer tools and are not loaded by the website runtime. MongoDB diagnostics are in `scripts/diagnostics/` and use the same isolated-test-database guard.
 ## Environment Variables
 
-Create a `.env.local` file in the project root with the following variables:
+For production, configure environment variables in your hosting provider; local `.env.local` values are not deployed automatically. At minimum, production requires:
 
 ```
-MONGODB_URI=        # MongoDB connection string
-JWT_SECRET=         # Secret key for JWT token generation
-NEXT_PUBLIC_APP_URL= # Public application URL
+MONGODB_URI=                    # Production MongoDB connection string
+AUTH_SECRET=                     # Random secret of at least 32 characters
+NEXT_PUBLIC_APP_URL=             # Exact public HTTPS origin
+OTP_PROVIDER=twilio
+OTP_TWILIO_ACCOUNT_SID=
+OTP_TWILIO_AUTH_TOKEN=
+OTP_TWILIO_FROM_NUMBER=
+AUTH_DEV_MODE=false
 ```
 
-**Note**: Never commit `.env.local` to version control. Use `.env.example` to document required variables without sensitive values.
+For live Razorpay payments, configure the live key ID as both `RAZORPAY_KEY_ID` and `NEXT_PUBLIC_RAZORPAY_KEY_ID`, keep `RAZORPAY_KEY_SECRET` server-only, and set `RAZORPAY_WEBHOOK_SECRET` to the secret configured for the production webhook. Never use test keys for live payments or expose a secret through a `NEXT_PUBLIC_` variable.
+
+Before enabling salon identity-document uploads, generate and securely back up `SALON_DOCUMENT_ENCRYPTION_KEY` as a base64-encoded 32-byte key. The current local-disk upload implementation is not suitable for serverless or multi-instance production; use private object storage with access controls and retention policies before deploying those features in such an environment.
+
+Never commit `.env.local` or production credentials. Use `.env.example` as the variable-name reference and configure secrets through the hosting provider.
 
 ## Project Structure
 

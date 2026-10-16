@@ -14,7 +14,7 @@ This report intentionally does not modify application code or fix the project. I
 - Current HEAD: `91e2251`
 - Working tree: not clean
   - Modified: `scripts/test-phase24.ts`, `tsconfig.tsbuildinfo`
-  - Untracked: `PHASE_24_FINAL_INTEGRATION_AUDIT_REPORT.md`, `PHASE_24_STEP_5_BOOKING_FLOW_REPORT.md`, `PHASE_24_STEP_6_DASHBOARD_ACCESS_REPORT.md`, `PHASE_24_STEP_7_BARBER_ONBOARDING_REPORT.md`
+  - Phase reports are archived under [development-notes](./development-notes/), including [the Phase 24 integration audit](./development-notes/PHASE_24_FINAL_INTEGRATION_AUDIT_REPORT.md), [the booking flow report](./development-notes/PHASE_24_STEP_5_BOOKING_FLOW_REPORT.md), [the dashboard access report](./development-notes/PHASE_24_STEP_6_DASHBOARD_ACCESS_REPORT.md), and [the barber onboarding report](./development-notes/PHASE_24_STEP_7_BARBER_ONBOARDING_REPORT.md).
 
 ### Stack and framework evidence
 - [package.json](./package.json): Next.js `16.3.1`, React `19.2.8`, TypeScript `5`, Tailwind CSS `4`, MongoDB/Mongoose, Razorpay, Twilio, Zod, Zustand.

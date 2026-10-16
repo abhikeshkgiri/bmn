@@ -1,4 +1,5 @@
 export interface DemoReview {
+  id: string;
   customer: string;
   review: string;
   salon: string;
@@ -8,6 +9,7 @@ export interface DemoReview {
 
 export const DEMO_REVIEWS: DemoReview[] = [
   {
+    id: 'delhi-preview-1',
     customer: 'Sample preview',
     review: 'Illustrative placeholder copy only. No customer review has been submitted.',
     salon: 'Demo listing',
@@ -15,6 +17,7 @@ export const DEMO_REVIEWS: DemoReview[] = [
     badge: 'Preview only',
   },
   {
+    id: 'delhi-preview-2',
     customer: 'Sample preview',
     review: 'Illustrative placeholder copy only. No customer review has been submitted.',
     salon: 'Demo listing',
@@ -22,6 +25,7 @@ export const DEMO_REVIEWS: DemoReview[] = [
     badge: 'Preview only',
   },
   {
+    id: 'delhi-preview-3',
     customer: 'Sample preview',
     review: 'Illustrative placeholder copy only. No customer review has been submitted.',
     salon: 'Demo listing',
@@ -29,6 +33,7 @@ export const DEMO_REVIEWS: DemoReview[] = [
     badge: 'Preview only',
   },
   {
+    id: 'mumbai-preview-1',
     customer: 'Sample preview',
     review: 'Illustrative placeholder copy only. No customer review has been submitted.',
     salon: 'Demo listing',

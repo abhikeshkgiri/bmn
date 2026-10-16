@@ -117,6 +117,7 @@ export default function BookPage() {
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
   const [paymentPreparing, setPaymentPreparing] = useState(false);
   const [bookingError, setBookingError] = useState('');
+  const [requiresCustomerLogin, setRequiresCustomerLogin] = useState(false);
   const [createdBooking, setCreatedBooking] = useState<CreatedBooking | null>(null);
   const [customerProfile, setCustomerProfile] = useState<{ name: string; email?: string; phone?: string } | null>(null);
   const [paymentOrder, setPaymentOrder] = useState<{
@@ -128,7 +129,7 @@ export default function BookPage() {
   } | null>(null);
   const [paymentBookingId, setPaymentBookingId] = useState<string | null>(null);
 
-  const fetchServices = useCallback(async (salonId: string) => {
+  const fetchServices = useCallback(async (salonId: string): Promise<Service[]> => {
     setServicesLoading(true);
     setServiceError('');
     try {
@@ -137,11 +138,14 @@ export default function BookPage() {
       if (!response.ok || !result.success) {
         throw new Error(result.error?.message || 'Unable to load salon services.');
       }
-      setServices(result.data || []);
+      const loadedServices = result.data || [];
+      setServices(loadedServices);
+      return loadedServices;
     } catch (error) {
       console.error('Failed to fetch services:', error);
       setServices([]);
       setServiceError(error instanceof Error ? error.message : 'Unable to load salon services.');
+      return [];
     } finally {
       setServicesLoading(false);
     }
@@ -176,7 +180,14 @@ export default function BookPage() {
           const foundSalon = result.data.find((s: Salon) => s.slug === salonSlug.toLowerCase());
           if (foundSalon) {
             setSalon(foundSalon);
-            await fetchServices(foundSalon._id);
+            const loadedServices = await fetchServices(foundSalon._id);
+            const requestedServiceId = new URLSearchParams(window.location.search).get('serviceId');
+            const requestedService = loadedServices.find((service) => service._id === requestedServiceId);
+            if (requestedService) {
+              setSelectedService(requestedService);
+              setStep('barber');
+              await fetchBarbers(foundSalon._id, requestedService._id);
+            }
           }
         }
       } catch (error) {
@@ -208,7 +219,7 @@ export default function BookPage() {
 
     fetchSalon();
     fetchCustomerProfile();
-  }, [salonSlug, fetchServices]);
+  }, [salonSlug, fetchServices, fetchBarbers]);
 
   const fetchAvailableSlots = useCallback(async (
     date = selectedDate,
@@ -270,14 +281,24 @@ export default function BookPage() {
   const previewPrice = async (): Promise<CheckoutPrice | null> => {
     if (!salon || !selectedService) return null;
     setPriceLoading(true);
+    setRequiresCustomerLogin(false);
+    setBookingError('');
     try {
       const response = await fetch('/api/checkout/price', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ salonId: salon._id, serviceId: selectedService._id, couponCode: couponCode.trim() || undefined, loyaltyPoints: loyaltyPoints || undefined }),
       });
-      const result = await response.json() as { success: boolean; data?: CheckoutPrice; error?: { message?: string } };
+      const result = await response.json() as {
+        success: boolean;
+        data?: CheckoutPrice;
+        error?: { code?: string; message?: string } | string;
+      };
       if (!response.ok || !result.success || !result.data) {
-        setBookingError(result.error?.message || 'Unable to calculate checkout price. Please retry.');
+        const error = typeof result.error === 'string' ? undefined : result.error;
+        setRequiresCustomerLogin(response.status === 401);
+        setBookingError(error?.message || (response.status === 401
+          ? 'Sign in as a customer to continue with booking.'
+          : 'Unable to calculate checkout price. Please retry.'));
         return null;
       }
       setCheckoutPrice(result.data);
@@ -766,6 +787,14 @@ export default function BookPage() {
                 </Button>
                 {createdBooking && <p className="text-sm text-foreground-secondary">Your booking request {createdBooking.bookingNumber} is saved. Retry will continue payment for this request.</p>}
                 {bookingError && <p role="alert" className="text-sm text-red-700">{bookingError}</p>}
+                {requiresCustomerLogin && (
+                  <Link
+                    href={`/login?next=${encodeURIComponent(`/book/${salon.slug}`)}`}
+                    className="inline-flex font-semibold text-brand-pink hover:underline"
+                  >
+                    Sign in as a customer
+                  </Link>
+                )}
               </div>
             )}
 

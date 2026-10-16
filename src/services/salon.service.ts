@@ -12,6 +12,7 @@ import User from '@/models/User';
 import { generateUniqueSlug } from '@/utils/slug';
 import { normalizePhoneNumber } from '@/utils/phone';
 import { USER_ROLES } from '@/constants/roles';
+import type { SalonType } from '@/constants/services';
 import type { AuthUser } from '@/types';
 import type { SalonCreateInput, SalonUpdateInput } from '@/validations/salon.schema';
 import type { ISalon } from '@/models/Salon';
@@ -42,8 +43,6 @@ export interface PublicSalonDetails {
   images: string[];
   address: Partial<ISalon['address']>;
   location?: ISalon['location'];
-  contact: Partial<ISalon['contact']>;
-  socialLinks: NonNullable<ISalon['socialLinks']>;
   openingHours: Partial<ISalon['openingHours']>;
   facilities: ISalon['facilities'];
   rating: number;
@@ -86,8 +85,6 @@ interface PublicSalonRecord {
   images?: string[];
   address?: Partial<ISalon['address']>;
   location?: ISalon['location'];
-  contact?: Partial<ISalon['contact']>;
-  socialLinks?: ISalon['socialLinks'];
   openingHours?: Partial<ISalon['openingHours']>;
   facilities?: ISalon['facilities'];
   rating: number;
@@ -297,7 +294,7 @@ export async function getPublicSalonDetails(identifier: string): Promise<PublicS
     approvalStatus: APPROVED_SALON_STATUS_FILTER,
     ...supportedLocation,
   })
-    .select('name slug salonType description logo coverImage images address location contact socialLinks openingHours facilities rating reviewCount isVerified +demoKey')
+    .select('name slug salonType description logo coverImage images address location openingHours facilities rating reviewCount isVerified +demoKey')
     .maxTimeMS(5000)
     .lean();
 
@@ -399,8 +396,6 @@ export async function getPublicSalonDetails(identifier: string): Promise<PublicS
     images: (salon.images ?? []).filter((image): image is string => typeof image === 'string' && image.length > 0),
     address: salon.address ?? {},
     location: salon.location,
-    contact: salon.contact ?? {},
-    socialLinks: salon.socialLinks ?? {},
     openingHours: salon.openingHours ?? {},
     facilities: salon.facilities ?? [],
     rating: Number.isFinite(salon.rating) && salon.rating >= 0 && salon.rating <= 5 ? salon.rating : 0,
@@ -693,6 +688,7 @@ export async function listSalons(options: {
   search?: string;
   serviceSearch?: string;
   category?: string;
+  salonTypes?: SalonType[];
   sortBy?: string;
 }): Promise<{ salons: Array<ISalon & { isDemoPreview?: boolean }>; total: number; page: number; limit: number }> {
   const page = Math.min(1000, Math.max(1, options.page || 1));
@@ -718,6 +714,9 @@ export async function listSalons(options: {
       }),
     ).maxTimeMS(5000);
     query._id = { $in: matchingSalonIds };
+  }
+  if (options.salonTypes?.length) {
+    query.salonType = { $in: options.salonTypes };
   }
 
   // Filters
@@ -777,7 +776,7 @@ export async function listSalons(options: {
 
   // Fetch salons
   const salons = await Salon.find(query)
-    .select(`name slug description logo coverImage images address.area address.city address.state rating reviewCount isVerified${publicListing ? ' +demoKey' : ''}`)
+    .select(`name slug salonType description logo coverImage images address.area address.city address.state rating reviewCount isVerified${publicListing ? ' +demoKey' : ''}`)
     .sort(sortObj)
     .skip((page - 1) * limit)
     .limit(limit)

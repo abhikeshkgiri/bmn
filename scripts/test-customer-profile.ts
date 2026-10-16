@@ -62,6 +62,11 @@ assert.equal(isDatabaseUnavailableError(Object.assign(new Error('offline'), { na
 assert.equal(isDatabaseUnavailableError(new Error('invalid OTP')), false);
 
 assert.equal(CustomerAddressSchema.safeParse(validAddress).success, true);
+assert.equal(CustomerAddressSchema.safeParse({ ...validAddress, phone: '9876543210' }).success, true);
+assert.equal(CustomerAddressSchema.safeParse({ ...validAddress, phone: '98765432101' }).success, false);
+assert.equal(CustomerAddressSchema.safeParse({ ...validAddress, phone: '98765abc10' }).success, false);
+assert.equal(CustomerProfileUpdateSchema.safeParse({ email: 'not-an-email' }).success, false);
+assert.equal(CustomerProfileUpdateSchema.safeParse({ email: 'valid@example.com' }).success, true);
 assert.equal(CustomerAddressSchema.safeParse({ ...validAddress, customer: 'another-user' }).success, false);
 assert.equal(CustomerAddressSchema.safeParse({ ...validAddress, latitude: 10 }).success, false);
 assert.equal(CustomerAddressSchema.safeParse({ ...validAddress, latitude: 91, longitude: 0 }).success, false);

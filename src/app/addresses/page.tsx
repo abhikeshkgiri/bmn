@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { getPhoneDigits } from '@/utils/phone';
 
 type Address = {
   _id: string;
@@ -77,7 +78,7 @@ export default function AddressesPage() {
     setForm({
       label: address.label,
       name: address.name,
-      phone: address.phone || '',
+      phone: address.phone ? getPhoneDigits(address.phone) : '',
       addressLine1: address.addressLine1,
       addressLine2: address.addressLine2 || '',
       area: address.area || '',
@@ -147,7 +148,7 @@ export default function AddressesPage() {
         <form className="space-y-3" onSubmit={(event) => void save(event)}>
           <Input label="Label" value={form.label} maxLength={40} required onChange={(event) => setForm({ ...form, label: event.target.value })} />
           <Input label="Name" value={form.name} minLength={2} maxLength={100} required onChange={(event) => setForm({ ...form, name: event.target.value })} />
-          <Input label="Phone (optional)" value={form.phone} maxLength={20} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
+          <Input label="Phone (optional)" type="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
           <Input label="Address line 1" value={form.addressLine1} minLength={2} maxLength={200} required onChange={(event) => setForm({ ...form, addressLine1: event.target.value })} />
           <Input label="Address line 2 (optional)" value={form.addressLine2} maxLength={200} onChange={(event) => setForm({ ...form, addressLine2: event.target.value })} />
           <Input label="Area (optional)" value={form.area} maxLength={100} onChange={(event) => setForm({ ...form, area: event.target.value })} />

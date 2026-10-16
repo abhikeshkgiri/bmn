@@ -162,21 +162,28 @@ export async function POST(request: NextRequest) {
       panUploadToken,
       ...salonInput
     } = z.object({
-      aadhaarUploadToken: z.string().uuid(),
-      panUploadToken: z.string().uuid(),
+      aadhaarUploadToken: z.string().uuid().optional(),
+      panUploadToken: z.string().uuid().optional(),
     }).passthrough().parse(await request.json());
     const input = SalonCreateSchema.parse(salonInput);
     const salon = await createSalon(input, user);
     const [aadhaarDocument, panDocument, logo, coverImage, images] = await Promise.all([
-      finalizeStagedIdentityDocument(user._id.toString(), salon._id.toString(), salon.name, 'aadhaar', aadhaarUploadToken),
-      finalizeStagedIdentityDocument(user._id.toString(), salon._id.toString(), salon.name, 'pan', panUploadToken),
+      aadhaarUploadToken
+        ? finalizeStagedIdentityDocument(user._id.toString(), salon._id.toString(), salon.name, 'aadhaar', aadhaarUploadToken)
+        : Promise.resolve(undefined),
+      panUploadToken
+        ? finalizeStagedIdentityDocument(user._id.toString(), salon._id.toString(), salon.name, 'pan', panUploadToken)
+        : Promise.resolve(undefined),
       input.logo ? finalizeStagedSalonImage(user._id.toString(), salon._id.toString(), salon.name, input.logo) : Promise.resolve(input.logo),
       input.coverImage ? finalizeStagedSalonImage(user._id.toString(), salon._id.toString(), salon.name, input.coverImage) : Promise.resolve(input.coverImage),
       Promise.all((input.images ?? []).map((image) => finalizeStagedSalonImage(user._id.toString(), salon._id.toString(), salon.name, image))),
     ]);
+    const salonUpdates: Record<string, unknown> = { logo, coverImage, images };
+    if (aadhaarDocument) salonUpdates.aadhaarDocument = aadhaarDocument;
+    if (panDocument) salonUpdates.panDocument = panDocument;
     await Salon.updateOne(
       { _id: salon._id, owner: user._id },
-      { $set: { aadhaarDocument, panDocument, logo, coverImage, images } },
+      { $set: salonUpdates },
     );
     return NextResponse.json({
       success: true,
@@ -201,9 +208,6 @@ export async function POST(request: NextRequest) {
     }
     if (message === 'SALON_ALREADY_EXISTS') {
       return NextResponse.json({ success: false, error: { code: message, message: 'A salon is already associated with this owner.' } }, { status: 409 });
-    }
-    if (message.includes('uploaded aadhaar document was not found') || message.includes('uploaded pan document was not found')) {
-      return NextResponse.json({ success: false, error: { code: 'IDENTITY_DOCUMENT_REQUIRED', message: 'Upload valid Aadhaar and PAN documents before saving the salon.' } }, { status: 422 });
     }
     if (message.includes('SALON_ACCESS_DENIED')) {
       return NextResponse.json({ success: false, error: { code: 'FORBIDDEN', message: 'Salon owner access required' } }, { status: 403 });

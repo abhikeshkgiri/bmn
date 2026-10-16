@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
+import SiteHeader from "@/components/layout/SiteHeader";
+import SiteFooter from "@/components/layout/SiteFooter";
+import WelcomeRolePrompt from "@/components/layout/WelcomeRolePrompt";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,8 +17,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "BMN",
-  description: "Salon appointments and home barber booking platform",
+  title: {
+    default: "BookMyNai | Find a salon. Book your slot.",
+    template: "%s | BookMyNai",
+  },
+  description: "Discover salons near you, compare services and book an appointment with BookMyNai.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -26,7 +32,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <ServiceWorkerRegistration />
+        <SiteHeader />
         {children}
+        <SiteFooter />
+        <WelcomeRolePrompt />
       </body>
     </html>
   );

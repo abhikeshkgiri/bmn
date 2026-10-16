@@ -9,6 +9,12 @@ export const SalonApprovalDecisionSchema = z.object({
   { message: 'A rejection reason is required', path: ['reason'] },
 );
 
+export const AdminSalonStatusSchema = z.object({
+  action: z.literal('status'),
+  salonId: z.string().regex(/^[a-f\d]{24}$/i, 'Invalid salon id'),
+  isActive: z.boolean(),
+}).strict();
+
 export const SalonVerificationSchema = z.object({
   isVerified: z.boolean(),
 }).strict();

@@ -241,7 +241,7 @@ Classification: COMPLETED
 
 The repo already contains the Phase 24 test runner and focused test:
 
-- `test-phase24-runner.cjs`
+- `scripts/test-phase24-runner.cjs`
 - `scripts/test-phase24.ts`
 
 The Phase 24 test checks the `BarberOnboardingSchema` and confirms the `Bold Trim Club` seed visible in the data model remains available.
