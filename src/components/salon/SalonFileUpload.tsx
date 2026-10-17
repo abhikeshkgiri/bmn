@@ -12,7 +12,10 @@ function isUploadResult(value: unknown): value is SalonUploadResult {
   if (typeof value !== 'object' || value === null) return false;
   const result = value as Record<string, unknown>;
   return (
-    (typeof result.url === 'string' && result.url.startsWith('/uploads/')) ||
+    (typeof result.url === 'string' && (
+      result.url.startsWith('/uploads/') ||
+      /^\/api\/uploads\/[a-f\d-]{36}$/i.test(result.url)
+    )) ||
     (typeof result.uploadToken === 'string' && /^[a-f\d-]{36}$/i.test(result.uploadToken)) ||
     result.uploaded === true
   );

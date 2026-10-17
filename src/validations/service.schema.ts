@@ -7,11 +7,12 @@ const serviceDescription = z.string().trim().max(2000).optional();
 const localImage = z.string().trim().refine((value) => value.startsWith('/uploads/') && value.slice('/uploads/'.length).split('/').every(
   (segment) => segment.length > 0 && segment !== '.' && segment !== '..' && /^[a-zA-Z0-9._-]+$/.test(segment),
 ));
+const apiUploadedImage = z.string().regex(/^\/api\/uploads\/[a-f\d-]{36}$/i);
 const imageUrl = z.string().url();
-const serviceImage = z.union([imageUrl, localImage, z.literal('')])
+const serviceImage = z.union([imageUrl, localImage, apiUploadedImage, z.literal('')])
   .optional()
   .transform((value) => value || undefined);
-const serviceImageUpdate = z.union([imageUrl, localImage, z.literal(''), z.null()])
+const serviceImageUpdate = z.union([imageUrl, localImage, apiUploadedImage, z.literal(''), z.null()])
   .optional()
   .transform((value) => value === '' ? null : value);
 const servicePrice = z.number().int().min(0);

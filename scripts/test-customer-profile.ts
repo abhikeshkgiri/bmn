@@ -40,6 +40,8 @@ assert.equal(
   false,
 );
 assert.equal(CustomerProfileUpdateSchema.safeParse({ avatar: 'https://example.com/photo.jpg' }).success, true);
+assert.equal(CustomerProfileUpdateSchema.safeParse({ avatar: '/api/uploads/123e4567-e89b-12d3-a456-426614174000' }).success, true);
+assert.equal(CustomerProfileUpdateSchema.safeParse({ avatar: '/api/uploads/.staging/file.jpg' }).success, false);
 assert.equal(CustomerProfileUpdateSchema.safeParse({ avatar: 'javascript:alert(1)' }).success, false);
 assert.equal(CustomerProfileUpdateSchema.safeParse({ role: 'ADMIN' }).success, false);
 assert.equal(CustomerProfileUpdateSchema.safeParse({ name: 'A' }).success, false);

@@ -11,6 +11,7 @@ function isHttpUrl(value: string): boolean {
 }
 
 function isSafeUploadedImage(value: string): boolean {
+  if (/^\/api\/uploads\/[a-f\d-]{36}$/i.test(value)) return true;
   if (!value.startsWith('/uploads/')) return false;
   const segments = value.slice('/uploads/'.length).split('/');
   return (

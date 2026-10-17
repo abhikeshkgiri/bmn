@@ -32,6 +32,7 @@ assert.equal(ServiceCreateSchema.safeParse({ ...service, category: 'NOT_A_CATEGO
 assert.equal(ServiceCreateSchema.safeParse({ ...service, owner: userId }).success, false);
 assert.equal(ServiceCreateSchema.safeParse({ ...service, image: '' }).success, true);
 assert.equal(ServiceCreateSchema.safeParse({ ...service, image: '/uploads/looks-salon-64b000000000000000000001/service/123e4567-e89b-12d3-a456-426614174000.png' }).success, true);
+assert.equal(ServiceCreateSchema.safeParse({ ...service, image: '/api/uploads/123e4567-e89b-12d3-a456-426614174000' }).success, true);
 assert.equal(ServiceCreateSchema.safeParse({ ...service, image: '/uploads/../private-uploads/file' }).success, false);
 assert.equal(ServiceCreateSchema.safeParse({ ...service, discountPrice: 1001 }).success, false);
 assert.equal(ServiceCreateSchema.safeParse({ ...service, discountPrice: 1000 }).success, true);
@@ -81,6 +82,7 @@ assert.equal(BarberCreateSchema.safeParse({ ...barber, userId: 'x'.repeat(24) })
 assert.equal(BarberCreateSchema.safeParse({ ...barber, services: ['not-an-object-id'] }).success, false);
 assert.equal(BarberCreateSchema.safeParse({ ...barber, profileImage: 'javascript:alert(1)' }).success, false);
 assert.equal(BarberCreateSchema.safeParse({ ...barber, profileImage: '/uploads/looks-salon-64b000000000000000000001/barber/123e4567-e89b-12d3-a456-426614174000.jpg' }).success, true);
+assert.equal(BarberCreateSchema.safeParse({ ...barber, profileImage: '/api/uploads/123e4567-e89b-12d3-a456-426614174000' }).success, true);
 assert.equal(BarberCreateSchema.safeParse({ ...barber, profileImage: '/uploads/../private-uploads/file' }).success, false);
 assert.equal(BarberCreateSchema.safeParse({ ...barber, owner: userId }).success, false);
 assert.equal(BarberCreateSchema.safeParse({ ...barber, services: [serviceId, serviceId] }).success, false);

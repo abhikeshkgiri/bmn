@@ -68,7 +68,8 @@ const LocalPublicImageSchema = z.string().trim().refine((value) => {
     (segment) => segment.length > 0 && segment !== '.' && segment !== '..' && /^[a-zA-Z0-9._-]+$/.test(segment),
   );
 }, 'Image must be an uploaded salon image');
-const PublicImageSchema = z.union([HttpUrlSchema, LocalPublicImageSchema]);
+const ApiUploadedImageSchema = z.string().regex(/^\/api\/uploads\/[a-f\d-]{36}$/i, 'Image must be an uploaded salon image');
+const PublicImageSchema = z.union([HttpUrlSchema, LocalPublicImageSchema, ApiUploadedImageSchema]);
 const OptionalPublicImageSchema = z.union([PublicImageSchema, z.literal('')]).optional();
 
 export const ContactSchema = z.object({

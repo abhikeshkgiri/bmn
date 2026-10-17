@@ -57,11 +57,11 @@ On Windows, the project runner uses Next.js Webpack for development and producti
 
 ### Salon uploads
 
-Salon owners upload logo, cover, gallery, service, and barber images through the owner pages. Public salon images are stored under `public/uploads/<salon-name>-<salon-id>/` and served as salon image assets. Customer and barber account profile images are stored under `public/uploads/profiles/<account-id>/`. Only JPG, PNG, and WebP images are accepted (8 MB maximum).
+Salon owners upload logo, cover, gallery, service, and barber images through the owner pages. Public images are stored in MongoDB and served through an immutable image endpoint, so they persist across serverless deployments and instances. Images uploaded before a salon is created remain private to the uploading account until onboarding completes. Customer and barber profile images are public after upload. Only JPG, PNG, and WebP images are accepted (8 MB maximum).
 
-Owner Aadhaar and PAN uploads are restricted to PDF, JPG, or PNG (10 MB maximum), encrypted at rest with AES-256-GCM, and stored outside `public/` under `private-uploads/`. Only the salon owner and administrators can download them through the authenticated document endpoint. Set `SALON_DOCUMENT_ENCRYPTION_KEY` in `.env.local` to a locally generated base64-encoded 32-byte key before uploading documents. Keep that key backed up securely: documents cannot be decrypted without it.
+Owner Aadhaar and PAN uploads are restricted to PDF, JPG, or PNG (10 MB maximum), encrypted at rest with AES-256-GCM, and stored in MongoDB. Only the salon owner and administrators can download them through the authenticated document endpoint. Set `SALON_DOCUMENT_ENCRYPTION_KEY` in `.env.local` to a locally generated base64-encoded 32-byte key before uploading documents. Keep that key backed up securely: documents cannot be decrypted without it.
 
-Local disk storage is intended only for local development on a single persistent server. Do not deploy this storage setup to serverless or multi-instance production; use private object storage with access controls and retention policies instead. Upload folders and encryption keys are Git-ignored.
+Configured MongoDB storage is used in both local development and production; uploaded media is not written into the deployment filesystem.
 
 ## Available Scripts
 
@@ -93,7 +93,9 @@ AUTH_DEV_MODE=false
 
 For live Razorpay payments, configure the live key ID as both `RAZORPAY_KEY_ID` and `NEXT_PUBLIC_RAZORPAY_KEY_ID`, keep `RAZORPAY_KEY_SECRET` server-only, and set `RAZORPAY_WEBHOOK_SECRET` to the secret configured for the production webhook. Never use test keys for live payments or expose a secret through a `NEXT_PUBLIC_` variable.
 
-Before enabling salon identity-document uploads, generate and securely back up `SALON_DOCUMENT_ENCRYPTION_KEY` as a base64-encoded 32-byte key. The current local-disk upload implementation is not suitable for serverless or multi-instance production; use private object storage with access controls and retention policies before deploying those features in such an environment.
+Before enabling salon identity-document uploads, generate and securely back up `SALON_DOCUMENT_ENCRYPTION_KEY` as a base64-encoded 32-byte key, and configure it in the hosting provider. MongoDB stores the encrypted document bytes; losing or changing the key makes existing documents unreadable.
+
+Configure `AUTH_SECRET` for both Preview and Production deployments. It must be a stable random secret of at least 32 characters; rotating it invalidates existing sessions. Do not use `.env.local` as a substitute for hosting-provider environment variables.
 
 Never commit `.env.local` or production credentials. Use `.env.example` as the variable-name reference and configure secrets through the hosting provider.
 

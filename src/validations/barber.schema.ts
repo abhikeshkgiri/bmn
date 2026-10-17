@@ -9,7 +9,8 @@ const httpUrl = z.string().url().refine(
 const localImage = z.string().trim().refine((value) => value.startsWith('/uploads/') && value.slice('/uploads/'.length).split('/').every(
   (segment) => segment.length > 0 && segment !== '.' && segment !== '..' && /^[a-zA-Z0-9._-]+$/.test(segment),
 ));
-const imageReference = z.union([httpUrl, localImage]);
+const apiUploadedImage = z.string().regex(/^\/api\/uploads\/[a-f\d-]{36}$/i);
+const imageReference = z.union([httpUrl, localImage, apiUploadedImage]);
 const optionalUrl = z.union([imageReference, z.literal('')])
   .optional()
   .transform((value) => value || undefined);

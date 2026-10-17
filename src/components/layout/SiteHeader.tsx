@@ -25,7 +25,7 @@ export default function SiteHeader() {
     <header className="sticky top-0 z-50 border-b border-border bg-white/95 shadow-sm backdrop-blur">
       <div className="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
         <Link href="/" aria-label="BookMyNai home" className="shrink-0">
-          <Logo size="md" />
+          <Logo size="md" href={null} />
         </Link>
         <nav aria-label="Main navigation" className="hidden items-center gap-1 lg:flex">
           {navigationItems.map((item) => (

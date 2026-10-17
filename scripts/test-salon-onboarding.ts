@@ -110,6 +110,8 @@ assert.equal(SalonUpdateSchema.safeParse({ owner: 'another-account' }).success, 
 assert.equal(SalonOwnerUpdateSchema.safeParse({ isActive: true }).success, false);
 assert.equal(SalonOwnerUpdateSchema.safeParse({ logo: 'https://images.example/logo.png', images: ['https://images.example/interior.png'] }).success, true);
 assert.equal(SalonOwnerUpdateSchema.safeParse({ logo: '/uploads/looks-salon-507f1f77bcf86cd799439011/logo/123e4567-e89b-12d3-a456-426614174000.png' }).success, true);
+assert.equal(SalonOwnerUpdateSchema.safeParse({ logo: '/api/uploads/123e4567-e89b-12d3-a456-426614174000' }).success, true);
+assert.equal(SalonOwnerUpdateSchema.safeParse({ logo: '/api/uploads/not-a-uuid' }).success, false);
 assert.equal(SalonOwnerUpdateSchema.safeParse({ logo: '/uploads/../private-uploads/document.pdf' }).success, false);
 assert.equal(SalonOwnerUpdateSchema.safeParse({ images: ['javascript:alert(1)'] }).success, false);
 assert.equal(SalonOwnerUpdateSchema.safeParse({ contact: { email: '', website: '' } }).success, true);

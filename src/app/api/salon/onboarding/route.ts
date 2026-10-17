@@ -169,14 +169,14 @@ export async function POST(request: NextRequest) {
     const salon = await createSalon(input, user);
     const [aadhaarDocument, panDocument, logo, coverImage, images] = await Promise.all([
       aadhaarUploadToken
-        ? finalizeStagedIdentityDocument(user._id.toString(), salon._id.toString(), salon.name, 'aadhaar', aadhaarUploadToken)
+        ? finalizeStagedIdentityDocument(user._id.toString(), salon._id.toString(), 'aadhaar', aadhaarUploadToken)
         : Promise.resolve(undefined),
       panUploadToken
-        ? finalizeStagedIdentityDocument(user._id.toString(), salon._id.toString(), salon.name, 'pan', panUploadToken)
+        ? finalizeStagedIdentityDocument(user._id.toString(), salon._id.toString(), 'pan', panUploadToken)
         : Promise.resolve(undefined),
-      input.logo ? finalizeStagedSalonImage(user._id.toString(), salon._id.toString(), salon.name, input.logo) : Promise.resolve(input.logo),
-      input.coverImage ? finalizeStagedSalonImage(user._id.toString(), salon._id.toString(), salon.name, input.coverImage) : Promise.resolve(input.coverImage),
-      Promise.all((input.images ?? []).map((image) => finalizeStagedSalonImage(user._id.toString(), salon._id.toString(), salon.name, image))),
+      input.logo ? finalizeStagedSalonImage(user._id.toString(), salon._id.toString(), input.logo) : Promise.resolve(input.logo),
+      input.coverImage ? finalizeStagedSalonImage(user._id.toString(), salon._id.toString(), input.coverImage) : Promise.resolve(input.coverImage),
+      Promise.all((input.images ?? []).map((image) => finalizeStagedSalonImage(user._id.toString(), salon._id.toString(), image))),
     ]);
     const salonUpdates: Record<string, unknown> = { logo, coverImage, images };
     if (aadhaarDocument) salonUpdates.aadhaarDocument = aadhaarDocument;
